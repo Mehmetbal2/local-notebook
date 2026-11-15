@@ -1,4 +1,7 @@
 export default {
+  filterLearningResults: "Learning results",
+  filterAnalysisResults: "Analysis results",
+  filterReports: "Comprehensive report results",
   searchResultsPlaceholder: "Search results and notes…",
   searchResultContentHint: "Searches the text of notes and results, not only their titles",
   filterNotes: "Notes",

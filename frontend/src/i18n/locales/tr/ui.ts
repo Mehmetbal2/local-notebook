@@ -1,4 +1,7 @@
 export default {
+  filterLearningResults: "Öğrenme sonuçları",
+  filterAnalysisResults: "Analiz sonuçları",
+  filterReports: "Kapsamlı rapor sonuçları",
   searchResultsPlaceholder: "Sonuçlarda ve notlarda ara…",
   searchResultContentHint: "Yalnızca başlıklarda değil, not ve sonuçların metninde de arar",
   filterNotes: "Notlar",

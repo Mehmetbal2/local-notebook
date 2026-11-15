@@ -1,4 +1,7 @@
 export default {
+  filterLearningResults: "学习结果",
+  filterAnalysisResults: "分析结果",
+  filterReports: "综合报告结果",
   searchResultsPlaceholder: "搜索结果和笔记…",
   searchResultContentHint: "不仅搜索标题，也搜索笔记和结果正文",
   filterNotes: "笔记",
