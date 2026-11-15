@@ -1,17 +1,17 @@
 <template>
   <div class="collapsed-sidebar left">
-    <div class="collapsed-icon-btn" @click="emit('expand')" :title="$t('ui.expandSourcesPanel')">
+    <div v-key-activate class="collapsed-icon-btn" @click="emit('expand')" :title="$t('ui.expandSourcesPanel')">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
         <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/>
         <path d="M7 7h4v10H7z" opacity="0.5"/>
       </svg>
     </div>
-    <div class="collapsed-icon-btn" @click="emit('trigger-file-upload')" :title="$t('ui.addSource')">
+    <div v-key-activate class="collapsed-icon-btn" @click="emit('trigger-file-upload')" :title="$t('ui.addSource')">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
         <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
       </svg>
     </div>
-    <div class="collapsed-icon-btn" @click="emit('expand')" :title="$t('ui.sourceFileCount', { count: fileCount })">
+    <div v-key-activate class="collapsed-icon-btn" @click="emit('expand')" :title="$t('ui.sourceFileCount', { count: fileCount })">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
         <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
       </svg>
@@ -37,9 +37,10 @@ const emit = defineEmits<{
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 12px 6px;
+  padding: 12px 8px;
+  margin-right: 12px;
   background: var(--bg-white);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   flex-shrink: 0;
 }
 

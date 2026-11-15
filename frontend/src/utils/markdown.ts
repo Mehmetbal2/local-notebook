@@ -3,6 +3,7 @@
 import { marked } from 'marked'
 import katex from 'katex'
 import { escapeHtml } from './format'
+import { sanitizeHtml } from './sanitize'
 
 
 marked.setOptions({
@@ -70,9 +71,9 @@ export function renderMarkdownWithLatex(text: string): string {
 
   text = protectLatex(text, protectedItems)
 
-  let html = marked(text) as string
+  const html = marked(text) as string
 
-  return restoreProtectedItems(html, protectedItems)
+  return sanitizeHtml(restoreProtectedItems(html, protectedItems))
 }
 
 export function renderLatexOnly(text: string): string {
@@ -133,5 +134,5 @@ export function parseInlineMarkdown(text: string): string {
 
   html = html.replace(/\n/g, '<br>')
 
-  return restoreProtectedItems(html, protectedItems)
+  return sanitizeHtml(restoreProtectedItems(html, protectedItems))
 }

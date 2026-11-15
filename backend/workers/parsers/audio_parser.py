@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, List
 
 from .base import BaseParser, Block, ParseResult
+from utils.i18n import msg as ui_msg
 
 
 @dataclass
@@ -28,13 +29,13 @@ class AudioParser(BaseParser):
         import config
         from services.funasr_client import FunASRClient
 
-        enabled, base_url = await config.resolve_funasr_config()
-        if not enabled or not base_url:
-            raise RuntimeError("FunASR 服务地址未配置。请在「设置 → FunASR」配置服务地址后重新上传。")
+        enabled, base_url, model, api_key = await config.resolve_funasr_config()
+        if not enabled or not base_url or not model or not api_key:
+            raise RuntimeError(ui_msg("asr_not_configured"))
 
-        result = await FunASRClient(base_url).transcribe(file_path)
+        result = await FunASRClient(base_url=base_url, api_key=api_key, model=model).transcribe(file_path)
         if not result.success:
-            raise RuntimeError(f"音频识别失败: {result.error_message or '未知错误'}")
+            raise RuntimeError(ui_msg("asr_failed_detail", error=result.error_message or ui_msg("unknown_error")))
 
         blocks = self._build_blocks(result.segments)
         text = "\n".join(block.content for block in blocks)

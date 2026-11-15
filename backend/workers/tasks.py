@@ -13,18 +13,70 @@ from datetime import datetime, timezone
 from arq.connections import RedisSettings
 from arq.worker import func
 
+from utils.i18n import msg as ui_msg, set_language as set_ui_language
+
 logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 WORKFLOW_STEP_CONCURRENCY = int(os.getenv("WORKFLOW_STEP_CONCURRENCY", "3"))
 WORKFLOW_FEATURE_TIMEOUT = int(os.getenv("WORKFLOW_FEATURE_TIMEOUT", "900"))
 WORKFLOW_CANCEL_REQUESTED_STATUSES = {"cancelling", "cancelled"}
-WORKFLOW_CANCELLED_MESSAGE = "用户已停止生成"
 WORKFLOW_CANCELLED_STEP_MESSAGE = "__workflow_cancelled__"
 
 
 class WorkflowCancelled(RuntimeError):
     """Raised when a workflow has been cancelled by the user."""
+
+
+class FileProcessingCancelled(BaseException):
+    """Raised inside parse_file_task when the user stopped or deleted the file.
+
+    It derives from BaseException so the broad `except Exception` blocks around optional
+    steps (summaries, image descriptions) cannot swallow it.
+    """
+
+
+FILE_CANCELLED_STATUS = "cancelled"
+
+
+async def _raise_if_file_cancelled(file_id: str) -> None:
+    """Stop processing when the file was stopped (status 'cancelled') or deleted meanwhile."""
+    from sqlalchemy import select
+    from database import AsyncSessionLocal
+    from models.file import File
+
+    async with AsyncSessionLocal() as check_db:
+        status = (
+            await check_db.execute(select(File.status).where(File.id == file_id))
+        ).scalar_one_or_none()
+    if status is None or status == FILE_CANCELLED_STATUS:
+        raise FileProcessingCancelled()
+
+
+async def _discard_cancelled_file(session_factory, file_id: str, project_id: str) -> None:
+    """Remove whatever a stopped run already stored and leave the file marked 'cancelled'."""
+    from sqlalchemy import delete as sa_delete
+    from models.block import Block
+    from models.file import File
+    from models.image import Image
+    from models.segment import Segment
+    from services.vector_service import delete_by_file
+
+    async with session_factory() as cleanup_db:
+        await cleanup_db.execute(sa_delete(Segment).where(Segment.file_id == file_id))
+        await cleanup_db.execute(sa_delete(Block).where(Block.file_id == file_id))
+        await cleanup_db.execute(sa_delete(Image).where(Image.file_id == file_id))
+        db_file = await cleanup_db.get(File, file_id)
+        if db_file is not None:
+            db_file.status = FILE_CANCELLED_STATUS
+            db_file.error_message = None
+            db_file.processing_message = None
+            db_file.updated_at = datetime.now(timezone.utc)
+        await cleanup_db.commit()
+    try:
+        await asyncio.to_thread(delete_by_file, project_id, file_id)
+    except Exception as exc:
+        logger.warning(f"could not remove vectors of stopped file {file_id}: {exc}")
 
 
 def _exception_message(exc: BaseException) -> str:
@@ -51,6 +103,8 @@ async def _commit_file_progress(
         db_file.processing_message = message or None
     db_file.updated_at = datetime.now(timezone.utc)
     await db.commit()
+    if db_file.status != "ready":
+        await _raise_if_file_cancelled(db_file.id)
 
 
 class FileProgressTracker:
@@ -94,12 +148,12 @@ class FileProgressTracker:
 
 def _file_processing_message(file_type: str | None) -> str:
     if file_type == "pdf":
-        return "正在解析 PDF..."
+        return ui_msg("processing_pdf")
     if file_type in {"wav", "mp3", "m4a"}:
-        return "正在转写音频..."
+        return ui_msg("processing_audio")
     if file_type in {"jpg", "jpeg", "png"}:
-        return "正在分析图片..."
-    return "正在读取内容..."
+        return ui_msg("processing_image")
+    return ui_msg("processing_text")
 
 
 async def _get_workflow_status(session_factory, workflow_id: str) -> str | None:
@@ -115,20 +169,24 @@ async def _get_workflow_status(session_factory, workflow_id: str) -> str | None:
 
 async def _is_workflow_cancel_requested(session_factory, workflow_id: str) -> bool:
     status = await _get_workflow_status(session_factory, workflow_id)
-    return status in WORKFLOW_CANCEL_REQUESTED_STATUSES
+    # A deleted workflow has no row left; stop it like a cancelled one instead of
+    # letting it run to the end in the background.
+    return status is None or status in WORKFLOW_CANCEL_REQUESTED_STATUSES
 
 
 async def _raise_if_workflow_cancelled(session_factory, workflow_id: str) -> None:
     if await _is_workflow_cancel_requested(session_factory, workflow_id):
-        raise WorkflowCancelled(WORKFLOW_CANCELLED_MESSAGE)
+        raise WorkflowCancelled(ui_msg("workflow_cancelled"))
 
 
 async def _mark_workflow_cancelled(
     session_factory,
     workflow_id: str,
-    message: str = WORKFLOW_CANCELLED_MESSAGE,
+    message: str | None = None,
 ) -> None:
     from sqlalchemy import select
+
+    message = message or ui_msg("workflow_cancelled")
     from models.feature import Feature
     from models.workflow import Workflow
 
@@ -167,6 +225,12 @@ async def on_startup(ctx: dict) -> None:
     ctx["session_factory"] = AsyncSessionLocal
 
     await _recover_stuck_files(AsyncSessionLocal)
+    try:
+        from workers.deep_research import recover_deep_research
+
+        await recover_deep_research(AsyncSessionLocal, await _get_arq_pool())
+    except Exception:
+        logger.exception("Could not restart interrupted deep research jobs")
     from services.feature_agent_trace_service import cleanup_expired_feature_agent_traces
     await cleanup_expired_feature_agent_traces()
 
@@ -179,17 +243,18 @@ async def _recover_stuck_files(session_factory) -> None:
     from models.segment import Segment
     from models.block import Block
     from models.image import Image
+    from services.local_queue import get_active_local_queue
     from services.vector_service import delete_by_file
 
     async with session_factory() as db:
         result = await db.execute(
-            select(File).where(File.status == "processing")
+            select(File).where(File.status.in_(["processing", "pending"]))
         )
         stuck = result.scalars().all()
         if not stuck:
             return
 
-        logger.warning(f"Found {len(stuck)} file(s) stuck in 'processing', recovering...")
+        logger.warning(f"Found {len(stuck)} file(s) stuck in 'processing'/'pending', recovering...")
         arq_pool = await _get_arq_pool()
 
         for f in stuck:
@@ -204,15 +269,23 @@ async def _recover_stuck_files(session_factory) -> None:
             f.processing_total = None
             f.processing_message = None
             await db.flush()
-            await arq_pool.enqueue_job("parse_file_task", f.id)
-            logger.info(f"Re-enqueued file {f.id}")
+            if arq_pool is not None:
+                job = await arq_pool.enqueue_job("parse_file_task", f.id)
+                if job is not None:
+                    f.job_id = job.job_id
+                logger.info(f"Re-enqueued file {f.id}")
 
         await db.commit()
-        if arq_pool:
+        if arq_pool is not None and arq_pool is not get_active_local_queue():
             await arq_pool.aclose()
 
 
 async def _get_arq_pool():
+    from services.local_queue import get_active_local_queue
+    local_q = get_active_local_queue()
+    if local_q is not None:
+        return local_q
+
     from arq import create_pool
     try:
         return await create_pool(RedisSettings.from_dsn(REDIS_URL))
@@ -232,10 +305,13 @@ async def parse_file_task(
     file_id: str,
     output_language: str | None = None,
 ) -> dict:
+    set_ui_language(output_language)
     from models.file import File
     from models.project import Project
 
     session_factory = ctx["session_factory"]
+    stop_reason: str | None = None
+    project_id = ""
 
     async with session_factory() as db:
         db_file = await db.get(File, file_id)
@@ -243,9 +319,18 @@ async def parse_file_task(
             logger.error(f"parse_file_task: file {file_id} not found")
             return {"status": "error", "reason": "file not found"}
 
+        if db_file.status == FILE_CANCELLED_STATUS:
+            logger.info(f"parse_file_task: file {file_id} was stopped before it started")
+            return {"status": "cancelled", "file_id": file_id}
+
         file_name = db_file.file_name
         file_type = db_file.file_type
-        file_path = db_file.file_path
+        from paths import resolve_stored_path
+        file_path = resolve_stored_path(
+            db_file.file_path,
+            project_id=db_file.project_id,
+            file_name=file_name,
+        )
         project_id = db_file.project_id
         project = await db.get(Project, project_id)
         user_id = project.owner_user_id if project else None
@@ -273,14 +358,10 @@ async def parse_file_task(
             import config
             _, emb_base_url, _, emb_api_key = await config.resolve_embedding_config()
             if not emb_base_url:
-                raise RuntimeError(
-                    "Embedding 服务地址未配置。请在「设置」页面配置后重新上传。"
-                )
-            emb_source = await config.get_setting("embedding_source", "bailian")
+                raise RuntimeError(ui_msg("embedding_url_missing"))
+            emb_source = await config.get_setting("embedding_source", "local")
             if emb_source != "local" and not emb_api_key:
-                raise RuntimeError(
-                    "Embedding API Key 未配置。请在「设置」页面配置百炼 API Key 后重新上传。"
-                )
+                raise RuntimeError(ui_msg("embedding_key_missing"))
 
             logger.info(f"[{file_name}] step 1/5: extracting text & creating blocks")
             text, blocks, raw_images = await _extract_text_and_blocks(
@@ -292,10 +373,13 @@ async def parse_file_task(
             )
             logger.info(f"[{file_name}] extracted {len(text)} chars, {len(blocks)} blocks, {len(raw_images)} raw images")
 
+            await _raise_if_file_cancelled(file_id)
             images_meta = await _describe_images(file_name, raw_images, output_language=output_language)
+            await _raise_if_file_cancelled(file_id)
 
             if not blocks:
                 logger.warning(f"[{file_name}] no blocks produced, marking ready")
+                await _raise_if_file_cancelled(file_id)
                 db_file.status = "ready"
                 await _commit_file_progress(db, db_file, current=1, total=1, message="")
                 return {"status": "ok", "file_id": file_id, "segments": 0}
@@ -309,6 +393,7 @@ async def parse_file_task(
 
             if not segments:
                 logger.warning(f"[{file_name}] no segments produced, marking ready")
+                await _raise_if_file_cancelled(file_id)
                 db_file.status = "ready"
                 await _commit_file_progress(db, db_file, current=1, total=1, message="")
                 return {"status": "ok", "file_id": file_id, "segments": 0}
@@ -316,7 +401,10 @@ async def parse_file_task(
             logger.info(f"[{file_name}] {len(segments)} segments")
 
             segment_summaries: dict[int, str] = {}
+            llm_summary_indices: set[int] = set()
             llm_cfg = None
+            generate_segment_summaries = None
+            ak = bu = md = fmt = ""
             progress_units_per_pass = max(1, len(segments))
             summary_language = output_language
             try:
@@ -349,10 +437,10 @@ async def parse_file_task(
             progress = FileProgressTracker(db, db_file, standard_total)
             await progress.start()
 
-            if llm_cfg:
+            if llm_cfg and generate_segment_summaries is not None:
                 try:
                     seg_inputs = [{"segment_index": s.segment_index, "content": s.content} for s in segments]
-                    segment_summaries = await generate_segment_summaries(
+                    summary_batch = await generate_segment_summaries(
                         seg_inputs,
                         ak,
                         bu,
@@ -362,19 +450,27 @@ async def parse_file_task(
                         user_id=user_id,
                         progress_callback=progress.advance,
                     )
-                    logger.info(f"[{file_name}] summaries generated: {len(segment_summaries)}/{len(segments)}")
+                    segment_summaries = summary_batch.summaries
+                    llm_summary_indices = summary_batch.llm_indices
+                    logger.info(
+                        f"[{file_name}] summaries generated: "
+                        f"{len(segment_summaries)}/{len(segments)} "
+                        f"(llm={len(llm_summary_indices)})"
+                    )
                 except Exception as e:
                     remaining_summary_units = max(0, progress_units_per_pass - progress.current)
                     if remaining_summary_units:
                         await progress.advance(remaining_summary_units, force=True)
                     logger.warning(f"[{file_name}] segment summary step failed, continuing: {e}")
 
+            await _raise_if_file_cancelled(file_id)
             logger.info(f"[{file_name}] step 3: embedding {len(segments)} segments")
             from services.embedding_service import embed_texts
             contents = [s.content for s in segments]
             vectors = await embed_texts(contents, progress_callback=progress.advance)
             logger.info(f"[{file_name}] embedding done, dim={len(vectors[0])}")
 
+            await _raise_if_file_cancelled(file_id)
             logger.info(f"[{file_name}] step 4/5: storing vectors, blocks, segments & images")
             from services.vector_service import (
                 ensure_collection, upsert_chunks,
@@ -493,6 +589,12 @@ async def parse_file_task(
                     logger.info(f"[{file_name}] step 5.1: generating file summary")
                     ordered = [segment_summaries[s.segment_index]
                                for s in segments if s.segment_index in segment_summaries]
+                    preferred = [
+                        segment_summaries[s.segment_index]
+                        for s in segments
+                        if s.segment_index in llm_summary_indices
+                        and segment_summaries.get(s.segment_index)
+                    ]
                     file_result = await generate_file_summary(
                         file_name,
                         ordered,
@@ -502,6 +604,7 @@ async def parse_file_task(
                         api_format=fmt,
                         output_language=output_language,
                         user_id=user_id,
+                        preferred_summaries=preferred,
                     )
                     if file_result["summary"]:
                         db_file.summary = file_result["summary"]
@@ -515,6 +618,7 @@ async def parse_file_task(
             if llm_cfg:
                 await progress.advance(1, force=True)
 
+            await _raise_if_file_cancelled(file_id)
             db_file.status = "ready"
             await progress.finish()
 
@@ -538,17 +642,37 @@ async def parse_file_task(
             logger.info(f"[{file_name}] done: {len(blocks)} blocks, {len(segments)} segments, {len(images_meta)} images stored")
             return {"status": "ok", "file_id": file_id, "blocks": len(blocks), "segments": len(segments), "images": len(images_meta)}
 
+        except FileProcessingCancelled:
+            logger.info(f"[{file_name}] processing stopped by the user")
+            stop_reason = "stopped"
+
+        except asyncio.CancelledError:
+            logger.info(f"[{file_name}] processing task cancelled")
+            stop_reason = "task_cancelled"
+
         except Exception as exc:
             logger.exception(f"Failed to parse file {file_id}: {exc}")
             await db.rollback()
             db_file = await db.get(File, file_id)
             if not db_file:
-                raise
+                # Deleted while it was being processed: nothing left to mark or retry.
+                return {"status": "error", "reason": "file deleted"}
             db_file.status = "failed"
             db_file.error_message = str(exc)
             db_file.updated_at = datetime.now(timezone.utc)
             await db.commit()
             raise
+
+    # Clean up only after the session above is closed: its transaction may still hold the
+    # SQLite write lock until then, and a second session would wait on it.
+    if stop_reason is not None:
+        try:
+            await asyncio.shield(_discard_cancelled_file(session_factory, file_id, project_id))
+        except Exception as exc:
+            logger.warning(f"could not clean up stopped file {file_id}: {exc}")
+        if stop_reason == "task_cancelled":
+            raise asyncio.CancelledError()
+    return {"status": "cancelled", "file_id": file_id}
 
 
 async def _update_project_summary(
@@ -629,8 +753,8 @@ async def _describe_images(
     pending_images = [img for img in raw_images if not img.get("description")]
     if not pending_images:
         logger.info(
-            f"[{file_name}] step 1.5/5: 复用 {len(described_images)} "
-            "张已描述图片"
+            f"[{file_name}] step 1.5/5: reusing {len(described_images)} "
+            "already described images"
         )
         return described_images
 
@@ -640,16 +764,16 @@ async def _describe_images(
         api_key, base_url, model = await resolve_vlm_config()
         if not api_key or not model:
             logger.warning(
-                f"[{file_name}] VLM 未配置，跳过 {len(pending_images)} 张图片的描述"
+                f"[{file_name}] VLM not configured, skipping descriptions of {len(pending_images)} images"
             )
             return described_images
     except Exception:
-        logger.warning(f"[{file_name}] VLM 配置读取失败，跳过图片描述")
+        logger.warning(f"[{file_name}] could not read the VLM configuration, skipping image descriptions")
         return described_images
 
     logger.info(
-        f"[{file_name}] step 1.5/5: VLM 描述 {len(pending_images)} "
-        f"张图片（model={model}，并发=2）"
+        f"[{file_name}] step 1.5/5: VLM describing {len(pending_images)} "
+        f"images (model={model}, concurrency=2)"
     )
 
     from services.summary_service import normalize_output_language
@@ -670,19 +794,19 @@ async def _describe_images(
             image_path = img.get("file_path")
             if not image_path:
                 logger.warning(
-                    f"[{file_name}] 图片 {img.get('image_index', '?')} 缺少 file_path，跳过"
+                    f"[{file_name}] image {img.get('image_index', '?')} has no file_path, skipping"
                 )
                 return None
             try:
                 description, vlm_model = await describe_image(image_path, prompt=PROMPT)
                 logger.info(
-                    f"[{file_name}] 图片 {img['image_index']} "
-                    f"描述完成（{len(description)} 字）"
+                    f"[{file_name}] image {img['image_index']} "
+                    f"described ({len(description)} chars)"
                 )
                 return {**img, "description": description, "vlm_model": vlm_model}
             except Exception as exc:
                 logger.warning(
-                    f"[{file_name}] 图片 {img['image_index']} VLM 描述失败，跳过: {exc}"
+                    f"[{file_name}] image {img['image_index']} VLM description failed, skipping: {exc}"
                 )
                 return None
 
@@ -697,9 +821,9 @@ async def _extract_text_and_blocks(
 ) -> tuple[str, list, list]:
     from workers.parsers import get_parser_for_file
 
-    if file_type in ("txt", "pdf", "docx", "epub", "wav", "mp3", "m4a"):
+    if file_type in ("txt", "md", "markdown", "htm", "html", "pdf", "docx", "doc", "epub", "wav", "mp3", "m4a"):
         parser = get_parser_for_file(file_path)
-        if file_type == "pdf":
+        if file_type in ("pdf", "htm", "html"):
             result = await parser.parse(file_path, file_id=file_id, db=db)
         else:
             result = await parser.parse(file_path)
@@ -900,7 +1024,8 @@ async def generate_workflow_task(
     workflow_id: str,
     output_language: str | None = None,
 ) -> dict:
-    """规划 + 逐栏目生成一份报告。"""
+    """Plan a report, then generate it section by section."""
+    set_ui_language(output_language)
     from datetime import datetime, timezone
 
     from agent.feature_agent import FeatureAgent
@@ -920,7 +1045,7 @@ async def generate_workflow_task(
     workflow_started_at = time.perf_counter()
     output_language = (output_language or "").strip()
 
-    # 1) 载入 workflow，置 processing
+    # 1) Load the workflow and mark it processing
     async with session_factory() as db:
         from sqlalchemy import update as sa_update
 
@@ -930,7 +1055,7 @@ async def generate_workflow_task(
             return {"status": "error", "reason": "workflow not found"}
         if wf.status in WORKFLOW_CANCEL_REQUESTED_STATUSES:
             wf.status = "cancelled"
-            wf.error_message = wf.error_message or WORKFLOW_CANCELLED_MESSAGE
+            wf.error_message = wf.error_message or ui_msg("workflow_cancelled")
             wf.finished_at = datetime.now(timezone.utc)
             await db.commit()
             logger.info("[workflow] cancelled before start workflow_id=%s", workflow_id)
@@ -971,11 +1096,11 @@ async def generate_workflow_task(
 
     try:
         if not output_language:
-            raise ValueError("缺少输出语言")
+            raise ValueError(ui_msg("output_language_missing"))
 
         await _raise_if_workflow_cancelled(session_factory, workflow_id)
 
-        # 2) 未传标题时，先根据用户要求生成标题，再进入规划
+        # 2) Without a title, generate one from the user's requirements before planning
         if not user_title:
             await _raise_if_workflow_cancelled(session_factory, workflow_id)
             user_title = await generate_workflow_title(
@@ -994,7 +1119,7 @@ async def generate_workflow_task(
                 wf = await db.get(Workflow, workflow_id)
                 if wf:
                     if wf.status in WORKFLOW_CANCEL_REQUESTED_STATUSES:
-                        raise WorkflowCancelled(WORKFLOW_CANCELLED_MESSAGE)
+                        raise WorkflowCancelled(ui_msg("workflow_cancelled"))
                     if wf.title:
                         user_title = wf.title
                     else:
@@ -1012,7 +1137,7 @@ async def generate_workflow_task(
                 user_title,
             )
 
-        # 3) 规划栏目
+        # 3) Plan the sections
         await _raise_if_workflow_cancelled(session_factory, workflow_id)
         plan = await plan_workflow(
             project_id=project_id,
@@ -1035,11 +1160,11 @@ async def generate_workflow_task(
             json.dumps(plan, ensure_ascii=False, indent=2),
         )
 
-        # 4) 落 plan + 建 feature 行
+        # 4) Store the plan and create the feature rows
         async with session_factory() as db:
             wf = await db.get(Workflow, workflow_id)
             if wf and wf.status in WORKFLOW_CANCEL_REQUESTED_STATUSES:
-                raise WorkflowCancelled(WORKFLOW_CANCELLED_MESSAGE)
+                raise WorkflowCancelled(ui_msg("workflow_cancelled"))
             wf.plan_json = json.dumps(plan, ensure_ascii=False)
             if not wf.title:
                 plan_title = await ensure_unique_workflow_title(
@@ -1078,12 +1203,12 @@ async def generate_workflow_task(
             wf = await db.get(Workflow, workflow_id)
             if wf:
                 wf.status = "failed"
-                wf.error_message = f"规划失败: {exc}"
+                wf.error_message = ui_msg("planning_failed", error=exc)
                 wf.finished_at = datetime.now(timezone.utc)
                 await db.commit()
         raise
 
-    # 4) 按 planner 依赖图动态调度生成；每个栏目使用独立 CitationState。
+    # 4) Schedule generation along the planner's dependency graph; each section gets its own CitationState.
     from sqlalchemy import select
 
     if await _is_workflow_cancel_requested(session_factory, workflow_id):
@@ -1145,7 +1270,8 @@ async def generate_workflow_task(
                 feat.finished_at = datetime.now(timezone.utc)
                 await db.commit()
 
-    async def mark_feature_cancelled(item: dict, message: str = WORKFLOW_CANCELLED_MESSAGE) -> None:
+    async def mark_feature_cancelled(item: dict, message: str | None = None) -> None:
+        message = message or ui_msg("workflow_cancelled")
         async with session_factory() as db:
             feat = await db.get(Feature, item["id"])
             if feat and feat.status in {"pending", "processing"}:
@@ -1169,7 +1295,7 @@ async def generate_workflow_task(
             if not feat:
                 return step_id, False, "feature not found"
             if feat.status == "cancelled":
-                raise WorkflowCancelled(WORKFLOW_CANCELLED_MESSAGE)
+                raise WorkflowCancelled(ui_msg("workflow_cancelled"))
             feat.status = "processing"
             feat.started_at = datetime.now(timezone.utc)
             feat.error_message = None
@@ -1268,7 +1394,7 @@ async def generate_workflow_task(
             await mark_feature_cancelled(item)
             return step_id, False, WORKFLOW_CANCELLED_STEP_MESSAGE
         except asyncio.TimeoutError as exc:
-            message = f"栏目生成超时（{WORKFLOW_FEATURE_TIMEOUT} 秒）"
+            message = ui_msg("section_timeout", seconds=WORKFLOW_FEATURE_TIMEOUT)
             logger.exception(
                 "[workflow] step timeout workflow_id=%s step=%d/%d step_id=%s feature_id=%s name=%r "
                 "elapsed=%.2fs timeout=%ds",
@@ -1385,7 +1511,7 @@ async def generate_workflow_task(
     try:
         while pending_step_ids or running_tasks:
             if await _is_workflow_cancel_requested(session_factory, workflow_id):
-                raise WorkflowCancelled(WORKFLOW_CANCELLED_MESSAGE)
+                raise WorkflowCancelled(ui_msg("workflow_cancelled"))
 
             launch_ready_tasks()
 
@@ -1438,7 +1564,7 @@ async def generate_workflow_task(
                     continue
 
                 if message == WORKFLOW_CANCELLED_STEP_MESSAGE:
-                    raise WorkflowCancelled(WORKFLOW_CANCELLED_MESSAGE)
+                    raise WorkflowCancelled(ui_msg("workflow_cancelled"))
 
                 failed_step_ids[result_step_id] = message
                 failed += 1
@@ -1454,7 +1580,7 @@ async def generate_workflow_task(
 
             if succeeded_step_ids:
                 if await _is_workflow_cancel_requested(session_factory, workflow_id):
-                    raise WorkflowCancelled(WORKFLOW_CANCELLED_MESSAGE)
+                    raise WorkflowCancelled(ui_msg("workflow_cancelled"))
 
                 async with session_factory() as db:
                     await finalize_workflow_citations(db, workflow_id)
@@ -1485,7 +1611,7 @@ async def generate_workflow_task(
         await _mark_workflow_cancelled(session_factory, workflow_id)
         return {"status": "cancelled", "workflow_id": workflow_id}
 
-    # 5) 汇总 workflow 状态
+    # 5) Summarize the workflow status
     if await _is_workflow_cancel_requested(session_factory, workflow_id):
         logger.info("[workflow] cancelled before finalizing workflow_id=%s", workflow_id)
         await _mark_workflow_cancelled(session_factory, workflow_id)
@@ -1530,7 +1656,93 @@ FEATURE_INSTRUCTION_TEMPLATES = {
     ),
     "content_summary": (
         "Summarize the selected source materials with a clear structure. "
-        "Highlight the core ideas, important facts, and useful takeaways."
+        "Highlight the core thesis, main sections/themes, key arguments and supporting evidence, and essential takeaways."
+    ),
+    "timeline": (
+        "Analyze the selected source materials and construct a timeline or ordered progression: chronological events, "
+        "historical periods, biographical milestones, or the stages of a process or argument.\n"
+        "Output format (strict — the result is rendered as an interactive timeline):\n"
+        "1. Start with one short overview paragraph.\n"
+        "2. Optionally group entries under `## <era or phase>` headings.\n"
+        "3. Every entry is a `### <date, period or stage label> | <short title>` heading (the ` | ` separator is required), "
+        "followed by one paragraph of 1-3 sentences saying what happened and why it matters, ending with its [citation_X] markers.\n"
+        "4. Keep entries in order, 8-20 entries, and do not use tables or bullet lists for the entries."
+    ),
+    "mind_map": (
+        "Analyze the selected source materials and build a hierarchical mind map of their concepts.\n"
+        "Output format (strict — the result is rendered as an interactive tree):\n"
+        "1. Exactly one `# <central theme>` heading at the top.\n"
+        "2. 4-7 main branches as `## <branch>` headings; sub-branches as `### <sub-branch>` headings where useful.\n"
+        "3. Under each branch or sub-branch, list the leaf concepts as bullet items (`- `); nest related details with two-space "
+        "indented bullets. Each bullet is a short phrase of at most 14 words followed by its [citation_X] marker.\n"
+        "4. No prose paragraphs, tables or numbered lists; the hierarchy itself carries the structure."
+    ),
+    "flashcards": (
+        "Analyze the selected source materials and create study flashcards covering the key concepts, definitions, "
+        "principles, arguments and important facts.\n"
+        "Output format (strict — the result is rendered as flippable cards):\n"
+        "1. Group the cards under `## <theme>` headings.\n"
+        "2. Every card is a `### <front>` heading containing only the question, term or concept (no 'Front:' label, no numbering), "
+        "followed by exactly one paragraph with the back: a concise answer or explanation of 1-3 sentences ending with its "
+        "[citation_X] markers (no 'Back:' label).\n"
+        "3. Write 14-24 cards; one idea per card; no introduction, conclusion or any other text between cards."
+    ),
+    "quiz": (
+        "Analyze the selected source materials and create a quiz that tests real comprehension rather than recall of trivia.\n"
+        "Output format (strict — the result is rendered as an interactive quiz):\n"
+        "1. Group questions under `## <section>` headings (for example multiple choice, then short answer).\n"
+        "2. Every question is a `### <question text>` heading (no numbering).\n"
+        "3. A multiple-choice question is followed by exactly four bullet items `- A) ...`, `- B) ...`, `- C) ...`, `- D) ...` "
+        "with one correct option and plausible distractors, then one blockquote line `> ✓ B — <one-sentence explanation> [citation_X]` "
+        "where the letter after ✓ is the correct option.\n"
+        "4. A short-answer question has no bullet items and is followed by one blockquote line `> ✓ <model answer> [citation_X]`.\n"
+        "5. Write 8-12 multiple-choice and 2-4 short-answer questions. Vary which letter is correct. Do not add a separate answer key."
+    ),
+    "podcast": (
+        "Task: Write the full script of a two-voice podcast conversation about the source materials, in the style of a "
+        "well-produced deep-dive show: one HOST who guides, asks and challenges, and one GUEST who knows the sources "
+        "inside out.\n"
+        "Format (strict — every line is read aloud by a text-to-speech system, one voice per speaker):\n"
+        "1. Every turn is ONE paragraph that starts with `HOST:` or `GUEST:` (exactly these two English tags, uppercase, "
+        "followed by a colon). No headings, bullet lists, tables, stage directions, sound effects or speaker names.\n"
+        "2. Keep inline [citation_X] markers at the end of the sentences they support; they are shown in the transcript "
+        "and removed from the audio.\n"
+        "3. Write what people actually say: short sentences, contractions, spoken numbers, no markdown emphasis.\n"
+        "Conversation design:\n"
+        "- Open with the HOST welcoming listeners in two or three sentences, naming the sources and the question the "
+        "episode will answer; the GUEST replies with why the material matters.\n"
+        "- Then move through 4-6 themes. For each theme the GUEST explains with concrete details and examples from the "
+        "sources; the HOST interrupts with clarifying questions, asks for an example, pushes back on a weak point or "
+        "raises a counter-argument, and relates the point to everyday experience; the GUEST adds nuance, corrects "
+        "misreadings and approaches the point from a second angle.\n"
+        "- Include at least one moment where the two disagree or weigh a tension in the sources, and one short recap by "
+        "the HOST in the middle (\"so far we have...\").\n"
+        "- Close with the GUEST's three key takeaways and the HOST signing off with one open question for listeners.\n"
+        "- Length: 1800-2600 words in total, turns of 1-5 sentences, alternating speakers; never two turns in a row by "
+        "the same speaker."
+    ),
+    "study_guide": (
+        "Analyze the selected source materials and write a study guide that someone could learn the material from.\n"
+        "Structure it with these `## ` sections, in this order, with titles translated into the output language: "
+        "Overview (one paragraph on what the sources cover and why it matters); Key concepts (a bullet list of terms, each with a "
+        "one-sentence definition); Main arguments and ideas (`### ` sub-sections with short paragraphs); Common misunderstandings "
+        "(bullets); Review questions (6-10 open questions, as a bullet list, without answers); Suggested study order (a short "
+        "numbered list). Cite every factual statement with [citation_X]."
+    ),
+    "faq": (
+        "Analyze the selected source materials and write the frequently asked questions a newcomer to this material would have.\n"
+        "Output format (strict — the result is rendered as an expandable list):\n"
+        "1. Group questions under `## <topic>` headings.\n"
+        "2. Every question is a `### <question>` heading phrased as a real reader would ask it, followed by exactly one paragraph "
+        "that answers it directly in 2-4 sentences and ends with its [citation_X] markers.\n"
+        "3. Write 10-16 questions, ordered from basic to advanced; no introduction or conclusion."
+    ),
+    "briefing_doc": (
+        "Analyze the selected source materials and write a briefing document for a busy decision-maker.\n"
+        "Structure it with these `## ` sections, in this order, with titles translated into the output language: "
+        "Bottom line (2-3 sentences with the single most important conclusion); Key findings (5-8 bullets, each one finding with "
+        "its evidence); Background and context (short paragraphs); Notable quotes (2-4 blockquotes taken verbatim from the sources); "
+        "Open questions and risks (bullets); Recommended next steps (a short numbered list). Be specific and cite every claim with [citation_X]."
     ),
     "title_suggestion": (
         "Generate title suggestions based on the selected source materials. "
@@ -1539,6 +1751,14 @@ FEATURE_INSTRUCTION_TEMPLATES = {
     "communication_copy": (
         "Generate communication copy from the selected source materials. "
         "Focus on clear messaging, audience value, and concise reusable copy."
+    ),
+    "audio_overview": (
+        "Task: Write a natural, engaging, and well-structured spoken narration script (audio overview) based on the source evidence.\n"
+        "Requirements:\n"
+        "1. Write in a fluent, broadcast-ready narrative style suitable for being read aloud from start to finish by a text-to-speech (TTS) model;\n"
+        "2. Begin with a clear introduction of the work/sources and their central theme, then walk through the key arguments, findings, and practical takeaways in cohesive paragraphs, and end with a concise synthesis;\n"
+        "3. Avoid markdown tables, raw code blocks, or visual-only formatting that cannot be read aloud naturally; use clear headings and flowing prose;\n"
+        "4. Keep inline [citation_X] evidence markers in the written script so the user can inspect the sources alongside the audio player."
     ),
 }
 
@@ -1563,6 +1783,7 @@ async def generate_feature_task(
     output_language: str | None = None,
 ) -> dict:
     """Generate a standalone quick-tool feature in the right panel."""
+    set_ui_language(output_language)
     from agent.capabilities import DEFAULT_FEATURE_TYPE
     from agent.feature_agent import FeatureAgent
     from agent.tools.query_knowledge_base import CitationState
@@ -1592,6 +1813,15 @@ async def generate_feature_task(
         await db.commit()
 
     try:
+        import config as app_config
+
+        tts_config = None
+        if feature_type in ("audio_overview", "podcast"):
+            tts_enabled, tts_base_url, tts_model, tts_api_key, tts_voice = await app_config.resolve_tts_config()
+            if not tts_enabled:
+                raise RuntimeError(ui_msg("tts_not_configured"))
+            tts_config = (tts_base_url or "", tts_api_key or "", tts_model or "", tts_voice or "deniz")
+
         citation_state = CitationState()
         citation_state.project_id = feature.project_id
         citation_state.file_ids = file_ids or None
@@ -1613,6 +1843,67 @@ async def generate_feature_task(
             user_id=user_id,
             trace_phase="standalone",
         )
+
+        if feature_type in ("audio_overview", "podcast") and tts_config is not None:
+            from paths import get_upload_dir
+            from services.tts_client import (
+                TTSClient,
+                blocks_to_speech_text,
+                parse_voices,
+                split_dialogue,
+            )
+
+            tts_base_url, tts_api_key, tts_model, tts_voice = tts_config
+            voices = parse_voices(tts_voice)
+            tts_client = TTSClient(
+                base_url=tts_base_url,
+                api_key=tts_api_key,
+                model=tts_model,
+                voice=voices[0],
+            )
+            output_dir = get_upload_dir() / "feature_audio"
+
+            if feature_type == "podcast":
+                # Two speakers: first configured voice hosts, second is the guest.
+                script_text = "\n".join(
+                    "".join(
+                        str(part.get("content", "")) for part in block.get("content_parts", [])
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    )
+                    for block in blocks
+                    if isinstance(block, dict) and block.get("block_type") != "audio"
+                )
+                turns = split_dialogue(script_text)
+                if len(turns) < 4:
+                    raise RuntimeError(ui_msg("podcast_not_dialogue"))
+                speaker_voices = {"HOST": voices[0], "GUEST": voices[1] if len(voices) > 1 else voices[0]}
+                _, mime_type = await tts_client.synthesize_dialogue_to_file(
+                    turns=turns,
+                    voices=speaker_voices,
+                    output_dir=output_dir,
+                    stem=feature_id,
+                )
+                caption = f"{tts_model} · {speaker_voices['HOST']} & {speaker_voices['GUEST']}"
+            else:
+                narration_text = blocks_to_speech_text(blocks)
+                if not narration_text:
+                    raise RuntimeError(ui_msg("tts_no_narration"))
+                _, mime_type = await tts_client.synthesize_to_file(
+                    text=narration_text,
+                    output_dir=output_dir,
+                    stem=feature_id,
+                )
+                caption = f"{tts_model} · {voices[0]}"
+
+            audio_block = {
+                "block_type": "audio",
+                "asset": {
+                    "url": f"/api/features/{feature_id}/audio",
+                    "mime_type": mime_type,
+                },
+                "caption": caption,
+            }
+            blocks = [audio_block] + list(blocks)
 
         async with session_factory() as db:
             feature = await db.get(Feature, feature_id)
@@ -1642,16 +1933,24 @@ async def generate_feature_task(
         raise
 
 
+from workers.deep_research import deep_research_task  # noqa: E402
+
+
 class WorkerSettings:
     functions = [
         parse_file_task,
         func(generate_feature_task, max_tries=1),
+        func(deep_research_task, max_tries=1),
         # Workflow generation is not idempotent yet; avoid ARQ replay appending duplicate steps.
         func(generate_workflow_task, max_tries=1),
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown
-    redis_settings = RedisSettings.from_dsn(REDIS_URL)
+    redis_settings = (
+        RedisSettings.from_dsn(REDIS_URL)
+        if REDIS_URL.startswith(("redis://", "rediss://", "unix://"))
+        else RedisSettings()
+    )
     max_jobs = int(os.getenv("WORKER_MAX_JOBS", "4"))
     job_timeout = int(os.getenv("WORKER_JOB_TIMEOUT", "3600"))
     max_tries = 3

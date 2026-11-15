@@ -1,59 +1,30 @@
 <template>
   <div v-if="rightPanelCollapsed" class="collapsed-sidebar right">
-    <div class="collapsed-icon-btn" @click="emit('update:rightPanelCollapsed', false)" :title="$t('ui.expandToolboxPanel')">
+    <div v-key-activate class="collapsed-icon-btn" @click="emit('update:rightPanelCollapsed', false)" :title="$t('ui.expandToolboxPanel')">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
         <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/>
         <path d="M13 7h4v10h-4z" opacity="0.5"/>
       </svg>
     </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('audioOverview')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+    <div
+      v-for="tool in enabledQuickTools"
+      :key="tool.type"
+      v-key-activate class="collapsed-icon-btn"
+      :class="{ disabled: !hasReadyFiles }"
+      :title="hasReadyFiles ? t(tool.titleKey) : `${t(tool.titleKey)} (${t('ui.uploadAndProcessFilesFirst')})`"
+      @click="handleCollapsedToolClick(tool)"
+    >
+      <svg v-bind="getToolIconSvgProps(tool.icon)">
+        <path v-for="(d, idx) in getToolIconDefinition(tool.icon).paths" :key="idx" :d="d" />
       </svg>
     </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('videoOverview')">
+    <div
+      v-key-activate class="collapsed-icon-btn"
+      @click="handleCollapsedReportsClick"
+      :title="$t('ui.smartAnalysis')"
+    >
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z" />
-      </svg>
-    </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('mindMap')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3h7zM7 9H4V5h3v4zm10 6h3v4h-3v-4zm0-10h3v4h-3V5z" />
-      </svg>
-    </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('report')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
-      </svg>
-    </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('flashcards')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" />
-      </svg>
-    </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('quiz')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H7v-2h5v2zm5-4H7v-2h10v2zm0-4H7V7h10v2z" />
-      </svg>
-    </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('timeline')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" />
-      </svg>
-    </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('summary')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 6h-4v2h4v2h-4v2h4v2H9V7h6v2z" />
-      </svg>
-    </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('keyPoints')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-      </svg>
-    </div>
-    <div class="collapsed-icon-btn disabled" :title="developmentTitle('notes')">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" />
+        <path d="M9 3h6l1 2h4a1 1 0 0 1 1 1v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4l1-2zm1.24 2-.5 1H5v13h14V7h-4.74l-.5-1h-3.52zM7 10h10v2H7v-2zm0 4h7v2H7v-2z"/>
       </svg>
     </div>
   </div>
@@ -90,22 +61,26 @@
       @citation-click="part => emit('feature-citation-click', part)"
       @clear-citation="emit('clear-feature-citation')"
       @rename="title => emit('feature-rename', title)"
+      @regenerate="emit('feature-regenerate')"
+      @edit-note="emit('feature-edit-note')"
+      @ask-in-chat="payload => emit('ask-in-chat', payload)"
+      @sources-imported="result => emit('web-imported', result)"
     />
 
     <template v-else>
       <div class="panel-header">
-        <div class="panel-title-wrapper">
-          <span
-            class="panel-title clickable"
-            :class="{ active: toolboxMode === 'tools' }"
-            @click="emit('update:toolboxMode', 'tools')"
-          >{{ $t('ui.quickTools') }}</span>
-          <span class="panel-title-divider">/</span>
-          <span
-            class="panel-title clickable"
-            :class="{ active: toolboxMode === 'oneclick' }"
-            @click="emit('update:toolboxMode', 'oneclick')"
-          >{{ $t('ui.smartAnalysis') }}</span>
+        <div class="panel-title-wrapper" role="tablist">
+          <button
+            v-for="tab in toolboxTabs"
+            :key="tab.mode"
+            class="panel-title"
+            :class="{ active: toolboxMode === tab.mode }"
+            type="button"
+            role="tab"
+            :aria-selected="toolboxMode === tab.mode"
+            :title="tab.tooltipKey ? t(tab.tooltipKey) : undefined"
+            @click="emit('update:toolboxMode', tab.mode)"
+          >{{ t(tab.labelKey) }}</button>
         </div>
         <button class="panel-toggle-btn" @click="emit('update:rightPanelCollapsed', true)" :title="$t('ui.collapsePanel')">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
@@ -117,32 +92,21 @@
 
       <div class="studio-content-wrapper">
         <Transition :name="transitionName">
-          <div v-if="toolboxMode === 'tools'" class="studio-content" key="tools">
+          <div v-if="toolboxMode !== 'oneclick'" class="studio-content" :key="toolboxMode">
             <div class="studio-tools-fixed">
               <div class="tool-grid oneclick">
                 <div
-                  v-for="tool in enabledQuickTools"
+                  v-for="tool in visibleQuickTools"
                   :key="tool.type"
-                  class="tool-card"
+                  v-key-activate class="tool-card"
                   :class="[`tool-card--${tool.color}`, { disabled: !hasReadyFiles }]"
                   :title="hasReadyFiles ? t(tool.tooltipKey) : t('ui.uploadAndProcessFilesFirst')"
                   @click="hasReadyFiles && emit('open-tool-config', tool)"
                 >
                   <div class="tool-card-icon">
-                    <svg v-if="tool.icon === 'audience'" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-                    <svg v-else-if="tool.icon === 'market'" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
-                    <svg v-else-if="tool.icon === 'custom'" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M4 21v-7"/>
-                      <path d="M4 10V3"/>
-                      <path d="M12 21v-9"/>
-                      <path d="M12 8V3"/>
-                      <path d="M20 21v-5"/>
-                      <path d="M20 12V3"/>
-                      <path d="M2 14h4"/>
-                      <path d="M10 8h4"/>
-                      <path d="M18 16h4"/>
+                    <svg v-bind="getToolIconSvgProps(tool.icon)">
+                      <path v-for="(d, idx) in getToolIconDefinition(tool.icon).paths" :key="idx" :d="d" />
                     </svg>
-                    <svg v-else viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3zm0 2.18 6 2.25V11c0 4.28-2.72 8.24-6 9.75C8.72 19.24 6 15.28 6 11V6.43l6-2.25zM9 11h6v2H9v-2zm0-3h6v2H9V8z"/></svg>
                   </div>
                   <span class="tool-card-title">{{ t(tool.titleKey) }}</span>
                 </div>
@@ -153,39 +117,105 @@
               <div class="oneclick-queue">
                 <div class="queue-header">
                   <span class="queue-title">{{ t('ui.generatedResult') }}</span>
+                  <button class="add-note-btn" type="button" @click="emit('add-note')">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                      <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                    </svg>
+                    {{ t('ui.addNote') }}
+                  </button>
                 </div>
 
+
+                <div v-if="features.length > 0" class="result-search">
+                  <div class="result-search-box" :class="{ active: resultQuery }">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                    <input
+                      v-model="resultQuery"
+                      type="search"
+                      class="result-search-input"
+                      :placeholder="t('ui.searchResultsPlaceholder')"
+                      :aria-label="t('ui.searchResultsPlaceholder')"
+                      @keydown.esc.prevent="clearResultSearch"
+                    />
+                    <span v-if="resultSearching" class="result-search-spinner" aria-hidden="true"></span>
+                    <button v-if="resultQuery" type="button" class="result-search-clear" :title="t('ui.clearSearch')" @click="clearResultSearch">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                    </button>
+                  </div>
+                  <div class="result-filter-row">
+                    <button
+                      type="button"
+                      class="result-filter-chip"
+                      :class="{ active: resultContent }"
+                      :title="t('ui.searchResultContentHint')"
+                      :aria-pressed="resultContent"
+                      @click="resultContent = !resultContent"
+                    >{{ t('ui.searchInContent') }}</button>
+                    <span class="result-filter-sep"></span>
+                    <button
+                      v-for="option in featureKindOptions"
+                      :key="option.value"
+                      type="button"
+                      class="result-filter-chip"
+                      :class="{ active: featureKind === option.value }"
+                      @click="featureKind = featureKind === option.value ? 'all' : option.value"
+                    >{{ option.label }}</button>
+                  </div>
+                </div>
                 <div v-if="features.length === 0" class="queue-empty">
                   <p>{{ hasReadyFiles ? t('ui.useTheButtonsAboveToGenerateQuickTool') : t('ui.uploadSourcesToGenerateQuickTool') }}</p>
                 </div>
 
+                <div v-else-if="filteredFeatures.length === 0" class="queue-empty">
+                  <p>{{ t('ui.noResultsMatch') }}</p>
+                </div>
+
                 <div v-else class="workflow-list">
                   <div
-                    v-for="feature in features"
+                    v-for="feature in filteredFeatures"
                     :key="feature.id"
-                    class="workflow-item feature-item"
+                    v-key-activate class="workflow-item feature-item"
                     :class="{ highlighted: highlightedFeatureId === feature.id }"
                     @click="emit('view-feature-detail', feature)"
                   >
                     <div class="workflow-item-icon icon-default" :class="getFeatureSourceClass(feature)">
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                        <path d="M4 4h16v2H4V4zm0 4h16v2H4V8zm0 4h10v2H4v-2zm0 4h13v2H4v-2z"/>
+                      <svg v-bind="getToolIconSvgProps(getFeatureIcon(feature))">
+                        <path v-for="(d, idx) in getToolIconDefinition(getFeatureIcon(feature)).paths" :key="idx" :d="d" />
                       </svg>
                     </div>
                     <div class="workflow-item-info">
                       <div class="workflow-item-title-row">
-                        <div class="workflow-item-name">{{ getFeatureDisplayName(feature) }}</div>
+                        <div class="workflow-item-name"><template v-for="(seg, si) in highlight(getFeatureDisplayName(feature), resultWords)" :key="si"><mark v-if="seg.hit" class="search-hit">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template></div>
                         <span class="workflow-source-chip" :class="getFeatureSourceClass(feature)">
                           {{ getFeatureSourceLabel(feature) }}
                         </span>
                       </div>
                       <div class="workflow-item-status">
-                        <span class="workflow-status-badge" :class="getFeatureStatusClass(feature.status)">
+                        <span v-if="feature.feature_type !== 'note'" class="workflow-status-badge" :class="getFeatureStatusClass(feature.status)">
                           {{ getFeatureStatusText(feature.status) }}
                         </span>
                         <span v-if="feature.created_at" class="workflow-item-time">{{ formatTime(feature.created_at) }}</span>
                       </div>
+                      <div
+                        v-if="feature.progress && (feature.status === 'pending' || feature.status === 'processing')"
+                        class="feature-progress-line"
+                        :title="feature.progress"
+                      >{{ feature.progress }}</div>
+                      <div v-if="resultSnippet(featureHits, feature.id)" class="result-hit" dir="auto">
+                        <template v-for="(seg, si) in resultSnippet(featureHits, feature.id)!" :key="si"><mark v-if="seg.hit" class="search-hit">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template>
+                        <span v-if="(featureHits.get(feature.id)?.count || 0) > 1" class="result-hit-more">{{ t('ui.moreMatches', { count: (featureHits.get(feature.id)?.count || 0) - 1 }) }}</span>
+                      </div>
                     </div>
+                    <button
+                      v-if="feature.status !== 'pending' && feature.status !== 'processing'"
+                      class="workflow-rename-btn"
+                      type="button"
+                      @click.stop="emit('rename-feature', feature, getFeatureDisplayName(feature))"
+                      :title="t('ui.rename')"
+                      :aria-label="t('ui.rename')"
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                    </button>
                     <button class="workflow-delete-btn" @click.stop="emit('delete-feature', feature)" :title="t('ui.delete')">
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                     </button>
@@ -235,15 +265,47 @@
                   <span class="queue-title">{{ t('ui.generatedResult') }}</span>
                 </div>
 
+
+                <div v-if="workflows.length > 0" class="result-search">
+                  <div class="result-search-box" :class="{ active: resultQuery }">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                    <input
+                      v-model="resultQuery"
+                      type="search"
+                      class="result-search-input"
+                      :placeholder="t('ui.searchResultsPlaceholder')"
+                      :aria-label="t('ui.searchResultsPlaceholder')"
+                      @keydown.esc.prevent="clearResultSearch"
+                    />
+                    <span v-if="resultSearching" class="result-search-spinner" aria-hidden="true"></span>
+                    <button v-if="resultQuery" type="button" class="result-search-clear" :title="t('ui.clearSearch')" @click="clearResultSearch">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                    </button>
+                  </div>
+                  <div class="result-filter-row">
+                    <button
+                      type="button"
+                      class="result-filter-chip"
+                      :class="{ active: resultContent }"
+                      :title="t('ui.searchResultContentHint')"
+                      :aria-pressed="resultContent"
+                      @click="resultContent = !resultContent"
+                    >{{ t('ui.searchInContent') }}</button>
+                  </div>
+                </div>
                 <div v-if="workflows.length === 0" class="queue-empty">
                   <p>{{ hasReadyFiles ? t('ui.useTheButtonsAboveToGenerateAReport') : t('ui.uploadSourcesToGenerateAReport') }}</p>
                 </div>
 
+                <div v-else-if="filteredWorkflows.length === 0" class="queue-empty">
+                  <p>{{ t('ui.noResultsMatch') }}</p>
+                </div>
+
                 <div v-else class="workflow-list">
                   <div
-                    v-for="workflow in workflows"
+                    v-for="workflow in filteredWorkflows"
                     :key="workflow.id"
-                    class="workflow-item"
+                    v-key-activate class="workflow-item"
                     :class="{ highlighted: highlightedWorkflowId === workflow.id }"
                     @click="emit('view-workflow-detail', workflow.id)"
                   >
@@ -268,7 +330,7 @@
                     </div>
                     <div class="workflow-item-info">
                       <div class="workflow-item-title-row">
-                        <div class="workflow-item-name">{{ getWorkflowDisplayName(workflow) }}</div>
+                        <div class="workflow-item-name"><template v-for="(seg, si) in highlight(getWorkflowDisplayName(workflow), resultWords)" :key="si"><mark v-if="seg.hit" class="search-hit">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template></div>
                         <span class="workflow-source-chip" :class="getWorkflowSourceClass(workflow)">
                           {{ getWorkflowSourceLabel(workflow) }}
                         </span>
@@ -285,6 +347,11 @@
                         </span>
                         <span v-else-if="workflow.created_at" class="workflow-item-time">{{ formatTime(workflow.created_at) }}</span>
                       </div>
+                      <div v-if="resultSnippet(workflowHits, workflow.id)" class="result-hit" dir="auto">
+                        <span v-if="workflowHits.get(workflow.id)?.snippets[0]?.section" class="result-hit-section">{{ workflowHits.get(workflow.id)?.snippets[0]?.section }}:</span>
+                        <template v-for="(seg, si) in resultSnippet(workflowHits, workflow.id)!" :key="si"><mark v-if="seg.hit" class="search-hit">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template>
+                        <span v-if="(workflowHits.get(workflow.id)?.count || 0) > 1" class="result-hit-more">{{ t('ui.moreMatches', { count: (workflowHits.get(workflow.id)?.count || 0) - 1 }) }}</span>
+                      </div>
                     </div>
                     <button
                       v-if="isWorkflowCancellable(workflow.status)"
@@ -296,7 +363,17 @@
                         <path d="M6 6h12v12H6z"/>
                       </svg>
                     </button>
-                    <button v-else class="workflow-delete-btn" @click.stop="emit('delete-workflow', workflow.id)" :title="t('ui.delete')">
+                    <button
+                      v-if="!isWorkflowCancellable(workflow.status)"
+                      class="workflow-rename-btn"
+                      type="button"
+                      @click.stop="emit('rename-workflow', workflow.id, getWorkflowDisplayName(workflow))"
+                      :title="t('ui.rename')"
+                      :aria-label="t('ui.rename')"
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                    </button>
+                    <button v-if="!isWorkflowCancellable(workflow.status)" class="workflow-delete-btn" @click.stop="emit('delete-workflow', workflow.id)" :title="t('ui.delete')">
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                     </button>
                   </div>
@@ -311,12 +388,16 @@
 </template>
 
 <script setup lang="ts">
-import type { FeatureListItem, WorkflowDetail, WorkflowListItem, WorkflowContentFeature } from '../../services/api'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { searchProject, type SearchHit } from '../../services/api'
+import { highlight, matchesAll, queryWords, snippetSegments, type TextSegment } from '../../utils/searchText'
+import type { FeatureListItem, WebSourceImportResponse, WorkflowDetail, WorkflowListItem, WorkflowContentFeature } from '../../services/api'
 import type { Feature, FeatureCitationRefPart } from '../../types'
 import { t } from '../../i18n'
 import FeatureDetailPanel from './FeatureDetailPanel.vue'
 import WorkflowDetailPanel from './WorkflowDetailPanel.vue'
-import { TOOL_TYPES } from '../../views/projectPage/toolTypes'
+import { TOOL_TYPES, getToolIconDefinition, getToolIconSvgProps } from '../../views/projectPage/toolTypes'
 import {
   formatWorkflowProgress,
   getWorkflowDisplayName,
@@ -330,14 +411,24 @@ import {
   type WorkflowPresetKey,
 } from '../../views/projectPage/workflowHelpers'
 
-type ToolboxMode = 'tools' | 'oneclick'
+/** 'tools' is the learning tab (kept for saved preferences), 'analysis' the analysis tab. */
+type ToolboxMode = 'tools' | 'analysis' | 'oneclick'
 type ToastType = 'success' | 'error' | 'info' | 'warning'
-type DevelopmentToolKey = 'audioOverview' | 'videoOverview' | 'mindMap' | 'report' | 'flashcards' | 'quiz' | 'timeline' | 'summary' | 'keyPoints' | 'notes'
 type QuickTool = typeof TOOL_TYPES[number]
 
 const enabledQuickTools = TOOL_TYPES.filter(tool => tool.enabled && !tool.type.includes('image') && !tool.type.includes('video'))
 
-defineProps<{
+const toolboxTabs: Array<{ mode: ToolboxMode; labelKey: string; tooltipKey?: string }> = [
+  { mode: 'tools', labelKey: 'ui.learningTools', tooltipKey: 'ui.learningToolsTooltip' },
+  { mode: 'analysis', labelKey: 'ui.analysisTools', tooltipKey: 'ui.analysisToolsTooltip' },
+  { mode: 'oneclick', labelKey: 'ui.smartAnalysis' },
+]
+
+function modeForTool(tool: QuickTool): ToolboxMode {
+  return tool.category === 'analyze' ? 'analysis' : 'tools'
+}
+
+const props = defineProps<{
   rightPanelCollapsed: boolean
   rightPanelWidth: number
   showFeatureDetail: boolean
@@ -365,6 +456,7 @@ const emit = defineEmits<{
   (e: 'close-workflow-detail'): void
   (e: 'cancel-workflow', workflowId: string): void
   (e: 'delete-workflow', workflowId: string): void
+  (e: 'rename-workflow', workflowId: string, currentName: string): void
   (e: 'workflow-title-update', id: string, title: string): void
   (e: 'workflow-citation-click', part: FeatureCitationRefPart, feature: WorkflowContentFeature): void
   (e: 'clear-workflow-citation'): void
@@ -374,9 +466,15 @@ const emit = defineEmits<{
   (e: 'feature-citation-click', part: FeatureCitationRefPart): void
   (e: 'clear-feature-citation'): void
   (e: 'feature-rename', newTitle: string): void
+  (e: 'feature-regenerate'): void
+  (e: 'feature-edit-note'): void
+  (e: 'add-note'): void
+  (e: 'web-imported', result: WebSourceImportResponse): void
+  (e: 'ask-in-chat', payload: { topic: string; context: string }): void
   (e: 'open-tool-config', tool: QuickTool): void
   (e: 'view-feature-detail', feature: FeatureListItem): void
   (e: 'delete-feature', feature: FeatureListItem): void
+  (e: 'rename-feature', feature: FeatureListItem, currentName: string): void
   (e: 'open-workflow-config', presetKey: WorkflowPresetKey): void
   (e: 'view-workflow-detail', workflowId: string): void
 }>()
@@ -385,11 +483,21 @@ function openWorkflowConfig(presetKey: WorkflowPresetKey) {
   emit('open-workflow-config', presetKey)
 }
 
-function developmentTitle(key: DevelopmentToolKey): string {
-  return t('ui.developmentTitle', {
-    name: t(`ui.${key}`),
-    status: t('ui.underDevelopment'),
-  })
+const visibleQuickTools = computed(() =>
+  enabledQuickTools.filter(tool => modeForTool(tool) === props.toolboxMode)
+)
+
+function handleCollapsedToolClick(tool: QuickTool) {
+  emit('update:toolboxMode', modeForTool(tool))
+  emit('update:rightPanelCollapsed', false)
+  if (props.hasReadyFiles) {
+    emit('open-tool-config', tool)
+  }
+}
+
+function handleCollapsedReportsClick() {
+  emit('update:toolboxMode', 'oneclick')
+  emit('update:rightPanelCollapsed', false)
 }
 
 function getFeatureTool(feature: FeatureListItem): QuickTool | undefined {
@@ -400,12 +508,21 @@ function getFeatureDisplayName(feature: FeatureListItem): string {
   return feature.title || feature.display_name || getFeatureSourceLabel(feature)
 }
 
+function getFeatureIcon(feature: FeatureListItem): string {
+  if (feature.feature_type === 'note') return 'note'
+  return getFeatureTool(feature)?.icon || 'summary'
+}
+
 function getFeatureSourceLabel(feature: FeatureListItem): string {
+  if (feature.feature_type === 'note') {
+    return feature.note_source === 'chat' ? t('ui.noteFromChat') : t('ui.note')
+  }
   const tool = getFeatureTool(feature)
   return tool ? t(tool.titleKey) : t('ui.quickTools')
 }
 
 function getFeatureSourceClass(feature: FeatureListItem): string {
+  if (feature.feature_type === 'note') return 'feature-source-note'
   const color = getFeatureTool(feature)?.color || 'cyan'
   return `feature-source-${color}`
 }
@@ -418,6 +535,88 @@ function getFeatureStatusText(status: FeatureListItem['status']): string {
   return status
 }
 
+// ── Search in results, notes and reports ────────────────────────────────────
+type FeatureKind = 'all' | 'note' | 'result' | 'deep_research'
+const route = useRoute()
+const resultQuery = ref('')
+const resultContent = ref(false)
+const featureKind = ref<FeatureKind>('all')
+const featureHits = ref<Map<string, SearchHit>>(new Map())
+const workflowHits = ref<Map<string, SearchHit>>(new Map())
+const resultSearching = ref(false)
+let resultTimer: ReturnType<typeof setTimeout> | null = null
+let resultSeq = 0
+
+const featureKindOptions = computed<{ value: FeatureKind; label: string }[]>(() => [
+  { value: 'note', label: t('ui.filterNotes') },
+  { value: 'result', label: t('ui.filterQuickResults') },
+  { value: 'deep_research', label: t('ui.deepResearch') },
+])
+const resultWords = computed(() => queryWords(resultQuery.value))
+
+function featureKindOf(feature: FeatureListItem): FeatureKind {
+  if (feature.feature_type === 'note') return 'note'
+  if (feature.feature_type === 'deep_research') return 'deep_research'
+  return 'result'
+}
+
+const filteredFeatures = computed(() => props.features.filter(feature => {
+  if (featureKind.value !== 'all' && featureKindOf(feature) !== featureKind.value) return false
+  if (!resultWords.value.length) return true
+  return matchesAll(getFeatureDisplayName(feature), resultWords.value) ||
+    (resultContent.value && featureHits.value.has(feature.id))
+}))
+
+const filteredWorkflows = computed(() => props.workflows.filter(workflow => {
+  if (!resultWords.value.length) return true
+  return matchesAll(getWorkflowDisplayName(workflow), resultWords.value) ||
+    (resultContent.value && workflowHits.value.has(workflow.id))
+}))
+
+function resultSnippet(hits: Map<string, SearchHit>, id: string): TextSegment[] | null {
+  if (!resultContent.value || !resultWords.value.length) return null
+  const snippet = hits.get(id)?.snippets[0]
+  return snippet ? snippetSegments(snippet.text, snippet.ranges) : null
+}
+
+function clearResultSearch() {
+  resultQuery.value = ''
+  featureKind.value = 'all'
+}
+
+async function runResultSearch() {
+  const query = resultQuery.value.trim()
+  const projectId = String(route.params.id || '')
+  const seq = ++resultSeq
+  if (!resultContent.value || query.length < 2 || !projectId) {
+    featureHits.value = new Map()
+    workflowHits.value = new Map()
+    resultSearching.value = false
+    return
+  }
+  resultSearching.value = true
+  try {
+    const data = await searchProject(projectId, query, 'features')
+    if (seq !== resultSeq) return
+    const toMap = (hits?: SearchHit[]) => new Map((hits || []).filter(h => h.count > 0).map(h => [h.id, h]))
+    featureHits.value = toMap(data.features)
+    workflowHits.value = toMap(data.workflows)
+  } catch (error) {
+    console.error('Result search failed:', error)
+  } finally {
+    if (seq === resultSeq) resultSearching.value = false
+  }
+}
+
+watch([resultQuery, resultContent], () => {
+  if (resultTimer) clearTimeout(resultTimer)
+  resultTimer = setTimeout(runResultSearch, 350)
+})
+
+onBeforeUnmount(() => {
+  if (resultTimer) clearTimeout(resultTimer)
+})
+
 function getFeatureStatusClass(status: FeatureListItem['status']): string {
   if (status === 'pending' || status === 'processing') return 'status-processing'
   if (status === 'completed') return 'status-completed'
@@ -427,14 +626,149 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 </script>
 
 <style scoped>
+/* The box draws the frame and focus ring; the field inside stays plain. */
+.result-search-input,
+.result-search-input:focus,
+.result-search-input:focus-visible {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  padding: 0;
+}
+
+.result-search-box:focus-within {
+  border-color: var(--primary-color);
+  box-shadow: var(--focus-ring);
+}
+
+.result-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.result-search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-white);
+  color: var(--text-tertiary);
+}
+
+.result-search-box:focus-within,
+.result-search-box.active {
+  border-color: var(--primary-color);
+}
+
+.result-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.result-search-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.result-search-clear {
+  display: flex;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.result-search-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--primary-light);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: result-search-spin 0.8s linear infinite;
+}
+
+@keyframes result-search-spin {
+  to { transform: rotate(360deg); }
+}
+
+.result-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.result-filter-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: var(--bg-white);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.result-filter-chip.active {
+  border-color: var(--primary-color);
+  background: var(--primary-light);
+  color: var(--primary-color);
+}
+
+.result-filter-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border-color);
+  margin: 0 2px;
+}
+
+.search-hit {
+  background: #fde68a;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.result-hit {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.result-hit-section {
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.result-hit-more {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
 .collapsed-sidebar {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 12px 6px;
+  padding: 12px 8px;
+  margin-left: 12px;
   background: var(--bg-white);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   flex-shrink: 0;
 }
 
@@ -465,7 +799,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 
 .studio-panel {
   background: var(--bg-white);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   flex-shrink: 1;
@@ -487,26 +821,27 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .panel-header {
-  padding: 16px 20px;
+  min-height: 52px;
+  padding: 10px 12px 10px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   overflow: visible;
   position: relative;
   z-index: 10;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .panel-toggle-btn {
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: 50%;
   color: var(--text-tertiary);
-  transition: background 0.15s, color 0.15s;
   cursor: pointer;
 }
 
@@ -527,7 +862,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 0 16px 16px;
+  padding: 16px 16px 16px;
   overflow: hidden;
   min-height: 0;
   width: 100%;
@@ -535,7 +870,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
   top: 0;
   left: 0;
   height: 100%;
-  background: #fff;
+  background: var(--bg-white);
 }
 
 .slide-left-enter-active,
@@ -570,6 +905,8 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 
 .studio-tools-fixed {
   flex-shrink: 0;
+  max-height: 46%;
+  overflow-y: auto;
   padding-bottom: 16px;
   margin-bottom: 16px;
   border-bottom: 1px solid var(--border-light);
@@ -604,17 +941,30 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .panel-title-wrapper {
-  display: flex;
+  min-width: 0;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-full);
 }
 
 .panel-title-wrapper .panel-title {
-  font-size: 14px;
+  border: none;
+  background: transparent;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 5px 14px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   user-select: none;
+  white-space: nowrap;
 }
 
 .panel-title-wrapper .panel-title:hover {
@@ -622,15 +972,13 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .panel-title-wrapper .panel-title.active {
-  font-size: 18px;
-  font-weight: 600;
+  background: var(--bg-white);
   color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .panel-title-wrapper .panel-title-divider {
-  font-size: 14px;
-  color: var(--border-color);
-  margin: 0 2px;
+  display: none;
 }
 
 .tool-grid.oneclick {
@@ -643,16 +991,18 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 10px 12px;
-  border-radius: 12px;
+  justify-content: space-between;
+  padding: 12px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s;
-  min-height: 60px;
+  transition: transform 0.2s var(--ease-standard), box-shadow 0.2s var(--ease-standard), filter 0.2s;
+  min-height: 76px;
 }
 
 .tool-grid.oneclick .tool-card:hover:not(.disabled):not(.tool-card--placeholder) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+  filter: saturate(1.25) brightness(0.98);
+  box-shadow: var(--shadow-sm);
 }
 
 .tool-grid.oneclick .tool-card.disabled {
@@ -676,16 +1026,16 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .tool-card--blue {
-  background: linear-gradient(135deg, rgba(147, 197, 253, 0.5) 0%, rgba(96, 165, 250, 0.5) 100%);
+  background: rgba(147, 197, 253, 0.5);
 }
 
 .tool-card--blue .tool-card-icon,
 .tool-card--blue .tool-card-title {
-  color: #1d4ed8;
+  color: var(--primary-hover);
 }
 
 .tool-card--cyan {
-  background: linear-gradient(135deg, rgba(165, 243, 252, 0.5) 0%, rgba(103, 232, 249, 0.5) 100%);
+  background: rgba(165, 243, 252, 0.5);
 }
 
 .tool-card--cyan .tool-card-icon,
@@ -694,7 +1044,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .tool-card--amber {
-  background: linear-gradient(135deg, rgba(253, 230, 138, 0.5) 0%, rgba(251, 191, 36, 0.5) 100%);
+  background: rgba(253, 230, 138, 0.5);
 }
 
 .tool-card--amber .tool-card-icon,
@@ -703,7 +1053,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .tool-card--indigo {
-  background: linear-gradient(135deg, rgba(199, 210, 254, 0.5) 0%, rgba(165, 180, 252, 0.5) 100%);
+  background: rgba(199, 210, 254, 0.5);
 }
 
 .tool-card--indigo .tool-card-icon,
@@ -711,9 +1061,54 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
   color: #4338ca;
 }
 
+.tool-card--green {
+  background: rgba(187, 247, 208, 0.55);
+}
+
+.tool-card--green .tool-card-icon,
+.tool-card--green .tool-card-title {
+  color: #15803d;
+}
+
+.tool-card--teal {
+  background: rgba(153, 246, 228, 0.5);
+}
+
+.tool-card--teal .tool-card-icon,
+.tool-card--teal .tool-card-title {
+  color: #0f766e;
+}
+
+.tool-card--purple {
+  background: rgba(233, 213, 255, 0.55);
+}
+
+.tool-card--purple .tool-card-icon,
+.tool-card--purple .tool-card-title {
+  color: #7e22ce;
+}
+
+.tool-card--rose {
+  background: rgba(254, 205, 211, 0.55);
+}
+
+.tool-card--rose .tool-card-icon,
+.tool-card--rose .tool-card-title {
+  color: #be123c;
+}
+
+.tool-card--orange {
+  background: rgba(254, 215, 170, 0.6);
+}
+
+.tool-card--orange .tool-card-icon,
+.tool-card--orange .tool-card-title {
+  color: #c2410c;
+}
+
 .tool-card--custom {
   background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.28) 0%, rgba(250, 204, 21, 0.34) 100%),
+    rgba(20, 184, 166, 0.28),
     radial-gradient(circle at 85% 12%, rgba(255, 255, 255, 0.68) 0%, rgba(255, 255, 255, 0) 34%);
   border: 1px solid rgba(13, 148, 136, 0.28);
 }
@@ -751,13 +1146,44 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 .queue-header {
   display: flex;
   align-items: center;
-  margin-bottom: 12px;
+  justify-content: space-between;
+  min-height: 32px;
+  margin-bottom: 8px;
+}
+
+.add-note-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 12px 0 8px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.add-note-btn:hover {
+  background: var(--bg-hover);
+}
+
+.workflow-item-icon.feature-source-note {
+  background: #fdefc3;
+  color: #8a5a00;
+}
+
+.workflow-source-chip.feature-source-note {
+  background: #fdefc3;
+  color: #8a5a00;
 }
 
 .queue-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
 }
 
 .queue-empty {
@@ -765,6 +1191,9 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 32px 16px;
+  text-align: center;
+  line-height: 1.5;
   color: var(--text-tertiary);
   font-size: 13px;
 }
@@ -774,8 +1203,8 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  background: var(--bg-secondary);
-  border-radius: 8px;
+  background: transparent;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -783,7 +1212,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 .workflow-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
 }
 
 .workflow-item:hover {
@@ -812,41 +1241,71 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .workflow-item-icon.source-quick-read {
-  background: linear-gradient(135deg, rgba(147, 197, 253, 0.5) 0%, rgba(96, 165, 250, 0.5) 100%);
-  color: #1d4ed8;
+  background: rgba(147, 197, 253, 0.5);
+  color: var(--primary-hover);
 }
 
 .workflow-item-icon.source-deep-dive {
-  background: linear-gradient(135deg, rgba(199, 210, 254, 0.5) 0%, rgba(165, 180, 252, 0.5) 100%);
+  background: rgba(199, 210, 254, 0.5);
   color: #4338ca;
 }
 
 .workflow-item-icon.source-custom {
   background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.28) 0%, rgba(250, 204, 21, 0.34) 100%),
+    rgba(20, 184, 166, 0.28),
     radial-gradient(circle at 85% 12%, rgba(255, 255, 255, 0.68) 0%, rgba(255, 255, 255, 0) 34%);
   border: 1px solid rgba(13, 148, 136, 0.28);
   color: #0f766e;
 }
 
 .workflow-item-icon.feature-source-cyan {
-  background: linear-gradient(135deg, rgba(165, 243, 252, 0.5) 0%, rgba(103, 232, 249, 0.5) 100%);
+  background: rgba(165, 243, 252, 0.5);
   color: #0e7490;
 }
 
 .workflow-item-icon.feature-source-amber {
-  background: linear-gradient(135deg, rgba(253, 230, 138, 0.5) 0%, rgba(251, 191, 36, 0.5) 100%);
+  background: rgba(253, 230, 138, 0.5);
   color: #b45309;
 }
 
 .workflow-item-icon.feature-source-indigo {
-  background: linear-gradient(135deg, rgba(199, 210, 254, 0.5) 0%, rgba(165, 180, 252, 0.5) 100%);
+  background: rgba(199, 210, 254, 0.5);
   color: #4338ca;
+}
+
+.workflow-item-icon.feature-source-green {
+  background: rgba(187, 247, 208, 0.55);
+  color: #15803d;
+}
+
+.workflow-item-icon.feature-source-teal {
+  background: rgba(153, 246, 228, 0.5);
+  color: #0f766e;
+}
+
+.workflow-item-icon.feature-source-purple {
+  background: rgba(233, 213, 255, 0.55);
+  color: #7e22ce;
+}
+
+.workflow-item-icon.feature-source-rose {
+  background: rgba(254, 205, 211, 0.55);
+  color: #be123c;
+}
+
+.workflow-item-icon.feature-source-blue {
+  background: rgba(147, 197, 253, 0.5);
+  color: var(--primary-hover);
+}
+
+.workflow-item-icon.feature-source-orange {
+  background: rgba(254, 215, 170, 0.6);
+  color: #c2410c;
 }
 
 .workflow-item-icon.feature-source-custom {
   background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.28) 0%, rgba(250, 204, 21, 0.34) 100%),
+    rgba(20, 184, 166, 0.28),
     radial-gradient(circle at 85% 12%, rgba(255, 255, 255, 0.68) 0%, rgba(255, 255, 255, 0) 34%);
   border: 1px solid rgba(13, 148, 136, 0.28);
   color: #0f766e;
@@ -894,18 +1353,18 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .workflow-source-chip.source-quick-read {
-  background: linear-gradient(135deg, rgba(147, 197, 253, 0.42) 0%, rgba(96, 165, 250, 0.28) 100%);
-  color: #1d4ed8;
+  background: rgba(147, 197, 253, 0.42);
+  color: var(--primary-hover);
 }
 
 .workflow-source-chip.source-deep-dive {
-  background: linear-gradient(135deg, rgba(199, 210, 254, 0.55) 0%, rgba(165, 180, 252, 0.38) 100%);
+  background: rgba(199, 210, 254, 0.55);
   color: #4338ca;
 }
 
 .workflow-source-chip.source-custom {
   background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.2) 0%, rgba(250, 204, 21, 0.28) 100%),
+    rgba(20, 184, 166, 0.2),
     radial-gradient(circle at 86% 12%, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 36%);
   border: 1px solid rgba(13, 148, 136, 0.22);
   color: #0f766e;
@@ -914,23 +1373,53 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 }
 
 .workflow-source-chip.feature-source-cyan {
-  background: linear-gradient(135deg, rgba(165, 243, 252, 0.44) 0%, rgba(103, 232, 249, 0.28) 100%);
+  background: rgba(165, 243, 252, 0.44);
   color: #0e7490;
 }
 
 .workflow-source-chip.feature-source-amber {
-  background: linear-gradient(135deg, rgba(253, 230, 138, 0.5) 0%, rgba(251, 191, 36, 0.28) 100%);
+  background: rgba(253, 230, 138, 0.5);
   color: #b45309;
 }
 
 .workflow-source-chip.feature-source-indigo {
-  background: linear-gradient(135deg, rgba(199, 210, 254, 0.55) 0%, rgba(165, 180, 252, 0.38) 100%);
+  background: rgba(199, 210, 254, 0.55);
   color: #4338ca;
+}
+
+.workflow-source-chip.feature-source-green {
+  background: rgba(187, 247, 208, 0.55);
+  color: #15803d;
+}
+
+.workflow-source-chip.feature-source-teal {
+  background: rgba(153, 246, 228, 0.52);
+  color: #0f766e;
+}
+
+.workflow-source-chip.feature-source-purple {
+  background: rgba(233, 213, 255, 0.58);
+  color: #7e22ce;
+}
+
+.workflow-source-chip.feature-source-rose {
+  background: rgba(254, 205, 211, 0.58);
+  color: #be123c;
+}
+
+.workflow-source-chip.feature-source-blue {
+  background: rgba(147, 197, 253, 0.42);
+  color: var(--primary-hover);
+}
+
+.workflow-source-chip.feature-source-orange {
+  background: rgba(254, 215, 170, 0.58);
+  color: #c2410c;
 }
 
 .workflow-source-chip.feature-source-custom {
   background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.2) 0%, rgba(250, 204, 21, 0.28) 100%),
+    rgba(20, 184, 166, 0.2),
     radial-gradient(circle at 86% 12%, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 36%);
   border: 1px solid rgba(13, 148, 136, 0.22);
   color: #0f766e;
@@ -949,8 +1438,18 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 
 .workflow-status-badge {
   font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.feature-progress-line {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workflow-status-badge.status-pending {
@@ -960,7 +1459,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 
 .workflow-status-badge.status-processing {
   background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
+  color: var(--primary-color);
   position: relative;
   animation: workflowBreathing 1.6s ease-in-out infinite;
 }
@@ -978,7 +1477,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 
 .workflow-status-badge.status-failed {
   background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  color: var(--error-color);
 }
 
 .workflow-status-badge.status-partial {
@@ -988,7 +1487,7 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 
 .workflow-status-badge.status-cancelled {
   background: rgba(107, 114, 128, 0.15);
-  color: #6b7280;
+  color: var(--text-tertiary);
 }
 
 .workflow-status-badge.status-processing::after,
@@ -1033,9 +1532,45 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
   transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
 
+.workflow-rename-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.workflow-rename-btn + .workflow-delete-btn {
+  margin-left: 2px;
+}
+
+.workflow-rename-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary-color);
+}
+
 .workflow-item:hover .workflow-stop-btn,
-.workflow-item:hover .workflow-delete-btn {
+.workflow-item:hover .workflow-rename-btn,
+.workflow-item:hover .workflow-delete-btn,
+.workflow-item:focus-within .workflow-rename-btn,
+.workflow-item:focus-within .workflow-delete-btn {
   opacity: 1;
+}
+
+@media (hover: none) {
+  .workflow-rename-btn,
+  .workflow-delete-btn {
+    opacity: 1;
+  }
 }
 
 .workflow-stop-btn {
@@ -1049,6 +1584,6 @@ function getFeatureStatusClass(status: FeatureListItem['status']): string {
 
 .workflow-delete-btn:hover {
   background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  color: var(--error-color);
 }
 </style>

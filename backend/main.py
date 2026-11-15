@@ -1,10 +1,15 @@
 import os
 import sys
+from pathlib import Path
+
 os.environ.setdefault("GRPC_DNS_RESOLVER", "native")
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "packages"))
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+sys.path.insert(0, os.path.join(_BACKEND_DIR, "packages"))
 
 import asyncio
 import logging
@@ -17,7 +22,15 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
+from paths import BACKEND_DIR, PROJECT_ROOT, get_data_dir, get_upload_dir
+
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(BACKEND_DIR / ".env")
+
+_models_cache_dir = get_data_dir() / "models"
+os.environ.setdefault("HF_HOME", str(_models_cache_dir / "huggingface"))
+os.environ.setdefault("MODELSCOPE_CACHE", str(_models_cache_dir / "modelscope"))
+os.environ.setdefault("TORCH_HOME", str(_models_cache_dir / "torch"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,21 +83,50 @@ async def lifespan(app: FastAPI):
         await config.load_settings(db)
     logger.info("Settings cache loaded")
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    # One-time repair of notes saved from chat with citations resolved against the wrong turn.
     try:
-        app.state.redis = await create_pool(RedisSettings.from_dsn(redis_url))
-        logger.info(f"Redis connected: {redis_url}")
-    except Exception as exc:
-        logger.warning(f"Redis unavailable ({exc}) — file parsing will be disabled")
-        app.state.redis = None
+        from routes.feature_routes import CHAT_NOTE_REPAIR_SETTING, repair_chat_note_citations
 
-    upload_dir = os.getenv("UPLOAD_DIR", "./uploads")
+        if await config.get_setting(CHAT_NOTE_REPAIR_SETTING, "") != "1":
+            async with AsyncSessionLocal() as db:
+                repaired = await repair_chat_note_citations(db)
+                await config.set_setting(CHAT_NOTE_REPAIR_SETTING, "1", db)
+            logger.info("Chat note citations checked; %d note(s) corrected", repaired)
+    except Exception:
+        logger.exception("Could not repair chat note citations")
+
+    upload_dir = get_upload_dir()
     os.makedirs(upload_dir, exist_ok=True)
 
+    try:
+        from services.ocr_client import cleanup_ocr_cache
+
+        removed = await asyncio.to_thread(cleanup_ocr_cache)
+        if removed:
+            logger.info(f"Removed {removed} old OCR cache folder(s)")
+    except Exception:
+        logger.exception("Could not clean the OCR cache")
+
+    redis_url = os.getenv("REDIS_URL", "memory://").strip()
     worker = None
     worker_task = None
-    if app.state.redis:
-        from workers.tasks import WorkerSettings
+    local_queue = None
+
+    if redis_url.startswith(("redis://", "rediss://", "unix://")):
+        try:
+            app.state.redis = await create_pool(RedisSettings.from_dsn(redis_url))
+            logger.info(f"Redis connected: {redis_url}")
+        except Exception as exc:
+            logger.info(
+                f"External Redis unavailable ({exc}) — switching to embedded local task queue"
+            )
+            app.state.redis = None
+    else:
+        app.state.redis = None
+
+    from workers.tasks import WorkerSettings
+
+    if app.state.redis is not None:
         worker = Worker(
             functions=WorkerSettings.functions,
             on_startup=WorkerSettings.on_startup,
@@ -99,22 +141,61 @@ async def lifespan(app: FastAPI):
         worker_task = asyncio.create_task(worker.async_run())
         logger.info("Embedded ARQ worker started")
     else:
-        logger.warning("Redis unavailable — ARQ worker not started, file parsing disabled")
+        from services.local_queue import LocalTaskQueue, set_active_local_queue
+
+        local_queue = LocalTaskQueue(
+            functions=WorkerSettings.functions,
+            on_startup=WorkerSettings.on_startup,
+            on_shutdown=WorkerSettings.on_shutdown,
+            max_jobs=WorkerSettings.max_jobs,
+            max_tries=WorkerSettings.max_tries,
+            retry_delay=WorkerSettings.retry_delay,
+        )
+        set_active_local_queue(local_queue)
+        await local_queue.start()
+        app.state.redis = local_queue
 
     yield
 
-    if worker and worker_task and not worker_task.done():
-        if worker.main_task and not worker.main_task.done():
-            worker.main_task.cancel()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
-            worker_task.cancel()
-        logger.info("Embedded ARQ worker stopped")
-    if app.state.redis:
-        await app.state.redis.aclose()
+    if local_queue is not None:
+        from services.local_queue import set_active_local_queue
+        set_active_local_queue(None)
+        await local_queue.aclose()
+    else:
+        if worker and worker_task and not worker_task.done():
+            if worker.main_task and not worker.main_task.done():
+                worker.main_task.cancel()
+            try:
+                await asyncio.wait_for(worker_task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                worker_task.cancel()
+            logger.info("Embedded ARQ worker stopped")
+        if app.state.redis:
+            await app.state.redis.aclose()
     await engine.dispose()
     logger.info("Shutdown complete")
+
+
+class UILanguageMiddleware:
+    """Make the interface language sent by the frontend (X-UI-Language, falling back
+    to Accept-Language) available to `utils.i18n.msg` for the whole request,
+    including streamed responses."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        from utils.i18n import reset_language, set_language
+
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or []}
+        token = set_language(headers.get("x-ui-language") or headers.get("accept-language"))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_language(token)
 
 
 def create_app() -> FastAPI:
@@ -133,6 +214,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.add_middleware(UILanguageMiddleware)
+
     from routes import (
         admin_router,
         auth_router,
@@ -142,7 +225,9 @@ def create_app() -> FastAPI:
         file_router,
         project_router,
         session_router,
+        search_router,
         settings_router,
+        web_source_router,
         workflow_router,
     )
 
@@ -156,6 +241,8 @@ def create_app() -> FastAPI:
     app.include_router(session_router,     prefix="/api")
     app.include_router(chat_router,        prefix="/api")
     app.include_router(workflow_router,    prefix="/api")
+    app.include_router(web_source_router,  prefix="/api")
+    app.include_router(search_router,      prefix="/api")
 
     @app.get("/health", tags=["health"])
     async def health() -> dict:

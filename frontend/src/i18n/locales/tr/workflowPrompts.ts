@@ -1,0 +1,25 @@
+export default {
+  quickRead: [
+    'Seçili kaynaklardan bir "Hızlı Okuma" raporu oluşturun. Amaç, okuyucuların ana konuyu hızla kavramasına yardımcı olmaktır.',
+    '',
+    'Öncelik verin:',
+    '1. Kaynakların teması ve temel sonuçları.',
+    '2. Temel olgular, kişiler/kuruluşlar, zaman çizelgesi veya temel kavramlar.',
+    '3. En önemli öne çıkanlar, olağandışı durumlar, tartışmalar veya boşluklar.',
+    '4. Sırada sorulmaya değer sorular veya daha derin okunmaya değer alanlar.',
+    '',
+    'Gereksinimler: yapıyı kompakt ve net tutun; yalnızca kaynaklarla desteklenen içeriğe yer verin; tüm olgusal ifadeler için atıfları koruyun.',
+  ].join('\n'),
+  deepDive: [
+    'Seçili kaynaklardan bir "Temel Derinlemesine İnceleme" raporu oluşturun. Amaç, materyaldeki en önemli sorunları, argümanları ve ilişkileri sistematik biçimde çözümlemektir.',
+    '',
+    'Öncelik verin:',
+    '1. Arka plan ve sorun tanımı.',
+    '2. Temel argümanlar ve bunların kanıt zincirleri.',
+    '3. Önemli kavramlar, mekanizmalar, nedensellik zincirleri veya yapısal ilişkiler.',
+    '4. Farklı görüşler, görüş ayrılıkları, belirsizlikler ve olası karşı örnekler.',
+    '5. Sonuçlar, riskler ve uygulanabilir öneriler.',
+    '',
+    'Gereksinimler: yapıyı net, analizi derin tutun; genel bir özetten kaçının; her olgusal ifade kaynaklara dayanmalı ve atıfları korumalıdır.',
+  ].join('\n'),
+} as const

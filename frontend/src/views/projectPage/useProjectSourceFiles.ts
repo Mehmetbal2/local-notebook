@@ -1,15 +1,19 @@
 import { computed, ref, watch } from 'vue'
 import { getModelOutputLanguage, locale, t } from '@/i18n'
 import {
+  cancelFilesProcessing,
   deleteFile,
+  deleteFilesBatch,
   getFiles,
   getFilesStatusBatch,
+  reprocessFile,
   updateFile,
   uploadFile,
 } from '@/services/api'
 import type { FileInfo } from '@/types'
+import type { WebSourceImportResponse } from '@/services/api'
 import type { UploadingFile } from '@/components/project/source/types'
-import { checkFileSize, isImageFile, MAX_FILE_COUNT } from './fileHelpers'
+import { checkFileSize, isBibliographicName, isImageFile, MAX_FILE_COUNT } from './fileHelpers'
 
 type ToastType = 'success' | 'error' | 'info' | 'warning'
 
@@ -95,6 +99,15 @@ export function useProjectSourceFiles({
     } else {
       selectedFileIds.value.splice(index, 1)
     }
+  }
+
+  /** Select the given sources: add them to the selection, or select only them. */
+  function setFileSelection(fileIds: string[], mode: 'add' | 'only') {
+    const ready = new Set(readyFiles.value.map(f => f.id))
+    const ids = fileIds.filter(id => ready.has(id))
+    selectedFileIds.value = mode === 'only'
+      ? ids
+      : Array.from(new Set([...selectedFileIds.value, ...ids]))
   }
 
   function toggleSelectAll() {
@@ -255,7 +268,7 @@ export function useProjectSourceFiles({
             }
           }
 
-          if (fileStatus.status === 'ready' || fileStatus.status === 'failed') {
+          if (fileStatus.status === 'ready' || fileStatus.status === 'failed' || fileStatus.status === 'cancelled') {
             pollingFileIds.value.delete(fileStatus.id)
           }
         }
@@ -294,10 +307,195 @@ export function useProjectSourceFiles({
     try {
       await deleteFile(fileId)
       files.value = files.value.filter((f) => f.id !== fileId)
+      pollingFileIds.value.delete(fileId)
       onFileDeleted?.(fileId)
+      showToast(t('ui.itemDeleted', { name: fileName }), 'success')
     } catch (error) {
       console.error('Failed to delete file:', error)
+      showToast(t('ui.deleteFilesFailed'), 'error')
     }
+  }
+
+  async function handleCancelFiles(fileIds: string[]) {
+    openMenuFileId.value = null
+    const active = fileIds.filter(id => {
+      const status = files.value.find(f => f.id === id)?.status
+      return status === 'pending' || status === 'processing'
+    })
+    if (active.length === 0) return
+
+    const firstName = files.value.find(f => f.id === active[0])?.file_name || t('ui.thisFile')
+    const confirmed = await showConfirm({
+      title: t('ui.stopProcessingTitle', { count: active.length }),
+      message: active.length === 1
+        ? t('ui.stopProcessingMessage', { name: firstName })
+        : t('ui.stopProcessingMessageMany', { count: active.length }),
+      type: 'warning',
+      confirmText: t('ui.stopProcessing'),
+      cancelText: t('ui.cancel'),
+    })
+    if (!confirmed) return
+
+    try {
+      const { stopped } = await cancelFilesProcessing(active)
+      for (const id of stopped) {
+        const index = files.value.findIndex(f => f.id === id)
+        if (index !== -1) {
+          files.value[index] = {
+            ...files.value[index]!,
+            status: 'cancelled',
+            error_message: undefined,
+            processing_message: null,
+          }
+        }
+        pollingFileIds.value.delete(id)
+      }
+      if (stopped.length > 0) {
+        showToast(
+          stopped.length === 1 ? t('ui.fileProcessingStopped') : t('ui.filesProcessingStopped', { count: stopped.length }),
+          'success',
+        )
+      }
+    } catch (error) {
+      console.error('Failed to stop file processing:', error)
+      showToast(t('ui.stopProcessingFailed'), 'error')
+    }
+  }
+
+  async function handleDeleteFiles(fileIds: string[]): Promise<boolean> {
+    openMenuFileId.value = null
+    const ids = fileIds.filter(id => files.value.some(f => f.id === id))
+    if (ids.length === 0) return false
+    if (ids.length === 1) {
+      await handleDeleteFile(ids[0]!)
+      return !files.value.some(f => f.id === ids[0])
+    }
+
+    const activeCount = files.value.filter(f => ids.includes(f.id) && (f.status === 'pending' || f.status === 'processing')).length
+    const confirmed = await showConfirm({
+      title: t('ui.deleteFilesTitle', { count: ids.length }),
+      message: activeCount > 0
+        ? t('ui.deleteFilesMessageWithActive', { count: ids.length, active: activeCount })
+        : t('ui.deleteFilesMessage', { count: ids.length }),
+      type: 'danger',
+      confirmText: t('ui.delete'),
+      cancelText: t('ui.cancel'),
+    })
+    if (!confirmed) return false
+
+    try {
+      const { deleted } = await deleteFilesBatch(ids)
+      const deletedSet = new Set(deleted)
+      files.value = files.value.filter(f => !deletedSet.has(f.id))
+      for (const id of deleted) {
+        pollingFileIds.value.delete(id)
+        onFileDeleted?.(id)
+      }
+      showToast(t('ui.filesDeleted', { count: deleted.length }), 'success')
+      return true
+    } catch (error) {
+      console.error('Failed to delete files:', error)
+      showToast(t('ui.deleteFilesFailed'), 'error')
+      return false
+    }
+  }
+
+  /** Start processing stopped or failed files again, from the beginning. */
+  async function handleReprocessFiles(fileIds: string[]) {
+    openMenuFileId.value = null
+    const ids = fileIds.filter(id => {
+      const status = files.value.find(f => f.id === id)?.status
+      return status === 'cancelled' || status === 'failed'
+    })
+    if (ids.length === 0) return
+
+    let started = 0
+    let lastError = ''
+    for (const fileId of ids) {
+      try {
+        const updated = await reprocessFile(fileId, getModelOutputLanguage())
+        const index = files.value.findIndex(f => f.id === fileId)
+        if (index !== -1) files.value[index] = { ...files.value[index]!, ...updated }
+        pollFileStatus(fileId)
+        started++
+      } catch (error: any) {
+        console.error('Failed to reprocess file:', error)
+        const msg = error?.response?.data?.detail
+        lastError = typeof msg === 'string' ? msg : t('ui.reprocessFailed')
+      }
+    }
+    if (started > 0) {
+      showToast(started === 1 ? t('ui.fileProcessingRestarted') : t('ui.filesProcessingRestarted', { count: started }), 'success')
+    }
+    if (lastError) showToast(lastError, 'error')
+  }
+
+  // ---- "Author - Year - Title" naming suggestions (the user always confirms) ----
+  const namingDismissedKey = `ln.sourceNamingDismissed.${projectId}`
+  const namingDismissed = ref<Set<string>>(new Set(readDismissed()))
+  const namingDialog = ref<{ visible: boolean; fileIds: string[]; saving: boolean }>({ visible: false, fileIds: [], saving: false })
+
+  function readDismissed(): string[] {
+    try {
+      const raw = JSON.parse(localStorage.getItem(namingDismissedKey) || '[]')
+      return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : []
+    } catch {
+      return []
+    }
+  }
+
+  function persistDismissed() {
+    try {
+      localStorage.setItem(namingDismissedKey, JSON.stringify([...namingDismissed.value]))
+    } catch {
+      // storage unavailable: the reminder simply comes back next time
+    }
+  }
+
+  /** Ready sources whose names are not "Author - Year - Title" and that the user has not dismissed. */
+  const filesNeedingNames = computed(() =>
+    files.value.filter(f => f.status === 'ready' && !isBibliographicName(f.file_name) && !namingDismissed.value.has(f.id))
+  )
+  const namingDialogFiles = computed(() =>
+    namingDialog.value.fileIds.map(id => files.value.find(f => f.id === id)).filter((f): f is FileInfo => !!f)
+  )
+
+  function openNamingDialog(fileIds: string[]) {
+    openMenuFileId.value = null
+    const ids = fileIds.filter(id => files.value.some(f => f.id === id && f.status === 'ready'))
+    if (ids.length === 0) return
+    namingDialog.value = { visible: true, fileIds: ids, saving: false }
+  }
+
+  function closeNamingDialog() {
+    namingDialog.value.visible = false
+  }
+
+  function dismissNamingReminder(fileIds: string[]) {
+    const next = new Set(namingDismissed.value)
+    fileIds.forEach(id => next.add(id))
+    namingDismissed.value = next
+    persistDismissed()
+  }
+
+  async function confirmSourceNames(renames: { id: string; fileName: string }[]) {
+    if (renames.length === 0) return
+    namingDialog.value.saving = true
+    let renamed = 0
+    for (const { id, fileName } of renames) {
+      try {
+        await renameFile(id, fileName)
+        renamed++
+      } catch (error) {
+        console.error('Failed to rename source:', error)
+      }
+    }
+    namingDialog.value.saving = false
+    // Whatever the user decided in the dialog, do not remind again about these files.
+    dismissNamingReminder(namingDialog.value.fileIds)
+    namingDialog.value.visible = false
+    if (renamed > 0) showToast(t('ui.sourcesRenamed', { count: renamed }), 'success')
+    if (renamed < renames.length) showToast(t('ui.renameFailed'), 'error')
   }
 
   async function renameFile(fileId: string, newName: string) {
@@ -311,6 +509,22 @@ export function useProjectSourceFiles({
       openMenuFileId.value = null
     } else {
       openMenuFileId.value = fileId
+    }
+  }
+
+  /** Files added from "Search the web": show them and follow their processing. */
+  function handleWebImported(result: WebSourceImportResponse) {
+    for (const file of result.imported) {
+      if (!files.value.some(f => f.id === file.id)) files.value.push(file)
+      if (file.status !== 'ready' && file.status !== 'failed') pollFileStatus(file.id)
+    }
+    if (result.imported.length) {
+      showToast(t('ui.webSourcesImportedToast', { count: result.imported.length }), 'success', 3000)
+    }
+    if (result.failed.length) {
+      showToast(t('ui.webSourcesImportFailedToast', { count: result.failed.length }), 'error', 5000)
+    } else if (result.abstract_only?.length) {
+      showToast(t('ui.webSourcesAbstractOnlyToast', { count: result.abstract_only.length }), 'info', 5000)
     }
   }
 
@@ -338,13 +552,25 @@ export function useProjectSourceFiles({
     loadFiles,
     toggleFileSelection,
     toggleSelectAll,
+    setFileSelection,
     triggerFileUpload,
     handleUploadFiles,
     handleInsertText,
+    handleWebImported,
     pollFileStatus,
     startFilePolling,
     stopFilePolling,
     handleDeleteFile,
+    handleCancelFiles,
+    handleDeleteFiles,
+    handleReprocessFiles,
+    filesNeedingNames,
+    namingDialog,
+    namingDialogFiles,
+    openNamingDialog,
+    closeNamingDialog,
+    dismissNamingReminder,
+    confirmSourceNames,
     renameFile,
     toggleFileMenu,
     handleClickOutside,

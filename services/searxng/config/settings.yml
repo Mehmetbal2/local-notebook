@@ -1,0 +1,44 @@
+# SearXNG settings for Local Notebook.
+# Only the overrides are listed here; everything else comes from SearXNG's defaults.
+# Docs: https://docs.searxng.org/admin/settings/index.html
+use_default_settings: true
+
+general:
+  instance_name: "Local Notebook Search"
+
+server:
+  # Local-only instance (published on 127.0.0.1 by docker-compose.yml).
+  # The real key comes from SEARXNG_SECRET, which ./start.sh creates in .env (not in git).
+  secret_key: "local-notebook-placeholder-key"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  # The Local Notebook backend talks to SearXNG through the JSON API.
+  formats:
+    - html
+    - json
+
+ui:
+  default_locale: ""
+
+engines:
+  # General web
+  - name: google
+    disabled: false
+  # Academic sources (category "science")
+  - name: openalex
+    disabled: false
+  - name: crossref
+    disabled: false
+  # Blocks automated queries (captcha), so it only fails and slows searches down.
+  - name: google scholar
+    disabled: true
+  # Slow servers: cap the wait so one engine does not hold up the whole search.
+  - name: pubmed
+    timeout: 5.0
+  - name: europepmc
+    timeout: 5.0

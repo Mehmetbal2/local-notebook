@@ -156,7 +156,7 @@ class Anthropic:
             return "off"
         if thinking_config["type"] == "adaptive":
             return "high"
-        budget = thinking_config["budget_tokens"]
+        budget = int(cast(dict[str, Any], thinking_config).get("budget_tokens", 1024))
         if budget <= 1024:
             return "low"
         if budget <= 4096:
@@ -208,6 +208,12 @@ class Anthropic:
         extra_headers = dict(generation_kwargs.pop("extra_headers", {}))
         if betas:
             extra_headers["anthropic-beta"] = ",".join(str(e) for e in betas)
+        extra_body = dict(generation_kwargs.pop("extra_body", {}) or {})
+        for sampling_key in ("temperature", "top_p", "top_k"):
+            if sampling_key in generation_kwargs:
+                val = generation_kwargs.pop(sampling_key)
+                if val is not None:
+                    extra_body[sampling_key] = val
 
         tools_ = [_convert_tool(tool) for tool in tools]
         if self._prompt_cache and tools:
@@ -217,9 +223,10 @@ class Anthropic:
                 model=self._model,
                 messages=messages,
                 system=system,
-                tools=tools_,
+                tools=tools_ if tools_ else omit,
                 stream=self._stream,
                 extra_headers=extra_headers,
+                extra_body=extra_body or None,
                 metadata=self._metadata if self._metadata is not None else omit,
                 **generation_kwargs,
             )
@@ -313,7 +320,7 @@ class Anthropic:
                 )
                 i += 1
 
-            messages.append(MessageParam(role="user", content=blocks))
+            messages.append(cast(MessageParam, {"role": "user", "content": blocks}))
 
         return messages
 
@@ -324,13 +331,16 @@ class Anthropic:
         if role == "system":
             # Anthropic does not support system messages in the conversation.
             # We map it to a special user message.
-            return MessageParam(
-                role="user",
-                content=[
-                    TextBlockParam(
-                        type="text", text=f"<system>{message.extract_text(sep='\n')}</system>"
-                    )
-                ],
+            return cast(
+                MessageParam,
+                {
+                    "role": "user",
+                    "content": [
+                        TextBlockParam(
+                            type="text", text=f"<system>{message.extract_text(sep='\n')}</system>"
+                        )
+                    ],
+                },
             )
         elif role == "tool":
             if message.tool_call_id is None:
@@ -340,7 +350,7 @@ class Anthropic:
             else:
                 content = message.content
             block = _tool_result_message_to_block(message.tool_call_id, content)
-            return MessageParam(role="user", content=[block])
+            return cast(MessageParam, {"role": "user", "content": [block]})
 
         assert role in ("user", "assistant")
         blocks: list[ContentBlockParam] = []
@@ -380,7 +390,7 @@ class Anthropic:
                     input=tool_input,
                 )
             )
-        return MessageParam(role=role, content=blocks)
+        return cast(MessageParam, {"role": role, "content": blocks})
 
 
 class AnthropicStreamedMessage:

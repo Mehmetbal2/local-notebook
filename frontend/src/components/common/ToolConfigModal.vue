@@ -62,19 +62,8 @@
           <div class="tool-config-body">
             <div class="tool-info" :class="{ compact: isCustomTool }">
               <div class="tool-info-icon" :class="toolIconClass">
-                <svg v-if="isCustomTool" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 21v-7"/>
-                  <path d="M4 10V3"/>
-                  <path d="M12 21v-9"/>
-                  <path d="M12 8V3"/>
-                  <path d="M20 21v-5"/>
-                  <path d="M20 12V3"/>
-                  <path d="M2 14h4"/>
-                  <path d="M10 8h4"/>
-                  <path d="M18 16h4"/>
-                </svg>
-                <svg v-else viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-                  <path d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3zm0 2.18 6 2.25V11c0 4.28-2.72 8.24-6 9.75C8.72 19.24 6 15.28 6 11V6.43l6-2.25zM9 11h6v2H9v-2zm0-3h6v2H9V8z"/>
+                <svg v-bind="getToolIconSvgProps(toolIconName, 24)">
+                  <path v-for="(d, idx) in toolIconDef.paths" :key="idx" :d="d" />
                 </svg>
               </div>
               <div class="tool-info-copy">
@@ -135,8 +124,10 @@
 </template>
 
 <script setup lang="ts">
+import { useEscapeClose } from '../../composables/useEscapeClose'
 import { ref, watch, computed } from 'vue'
 import { t } from '../../i18n'
+import { TOOL_TYPES, getToolIconDefinition, getToolIconSvgProps } from '../../views/projectPage/toolTypes'
 
 interface FileItem {
   id: string
@@ -168,6 +159,8 @@ const titleText = ref('')
 const localSelectedIds = ref<string[]>([])
 
 const isCustomTool = computed(() => props.toolType === 'custom_feature')
+const toolIconName = computed(() => TOOL_TYPES.find(item => item.type === props.toolType)?.icon || (isCustomTool.value ? 'custom' : 'positioning'))
+const toolIconDef = computed(() => getToolIconDefinition(toolIconName.value))
 const toolIconClass = computed(() => `tool-${(props.toolType || 'custom').replace(/_/g, '-')}`)
 const modalHeading = computed(() => props.toolTitle || t('ui.customQuickTool'))
 const builtinPrompt = computed(() => (props.builtinPrompt || '').trim())
@@ -267,6 +260,8 @@ function handleConfirm() {
   if (!canConfirm.value) return
   emit('confirm', props.toolType, titleText.value.trim(), promptText.value.trim(), localSelectedIds.value)
 }
+
+useEscapeClose(() => props.visible, () => handleClose())
 </script>
 
 <style scoped>
@@ -295,7 +290,7 @@ function handleConfirm() {
   height: 700px;
   max-height: 95vh;
   background: var(--bg-white);
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
   animation: slideUp 0.25s ease;
   display: flex;
@@ -470,7 +465,7 @@ function handleConfirm() {
 }
 
 .file-icon.document {
-  color: #1a73e8;
+  color: var(--primary-color);
 }
 
 .file-name {
@@ -533,6 +528,36 @@ function handleConfirm() {
   color: #4338ca;
 }
 
+.tool-info-icon.tool-content-summary {
+  background: linear-gradient(135deg, rgba(187, 247, 208, 0.58) 0%, rgba(134, 239, 172, 0.5) 100%);
+  color: #15803d;
+}
+
+.tool-info-icon.tool-timeline {
+  background: linear-gradient(135deg, rgba(153, 246, 228, 0.55) 0%, rgba(94, 234, 212, 0.48) 100%);
+  color: #0f766e;
+}
+
+.tool-info-icon.tool-mind-map {
+  background: linear-gradient(135deg, rgba(233, 213, 255, 0.58) 0%, rgba(216, 180, 254, 0.5) 100%);
+  color: #7e22ce;
+}
+
+.tool-info-icon.tool-flashcards {
+  background: linear-gradient(135deg, rgba(254, 205, 211, 0.58) 0%, rgba(253, 164, 175, 0.48) 100%);
+  color: #be123c;
+}
+
+.tool-info-icon.tool-quiz {
+  background: linear-gradient(135deg, rgba(147, 197, 253, 0.55) 0%, rgba(96, 165, 250, 0.48) 100%);
+  color: var(--primary-hover);
+}
+
+.tool-info-icon.tool-audio-overview {
+  background: linear-gradient(135deg, rgba(254, 215, 170, 0.6) 0%, rgba(251, 146, 60, 0.45) 100%);
+  color: #c2410c;
+}
+
 .tool-info-icon.tool-custom-feature {
   background:
     linear-gradient(135deg, rgba(20, 184, 166, 0.28) 0%, rgba(250, 204, 21, 0.34) 100%),
@@ -583,7 +608,7 @@ function handleConfirm() {
 }
 
 .required {
-  color: #ef4444;
+  color: var(--error-color);
 }
 
 .tool-config-input {
@@ -689,7 +714,7 @@ function handleConfirm() {
 
 .tool-config-btn {
   padding: 10px 24px;
-  border-radius: 8px;
+  border-radius: var(--radius-full);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;

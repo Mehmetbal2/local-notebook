@@ -30,6 +30,7 @@ from services.session_title_service import (
     normalize_title_generation_status,
 )
 from utils.time import utc_isoformat
+from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger("session_routes")
 router = APIRouter(tags=["sessions"])
@@ -335,23 +336,34 @@ async def _enrich_image_citations(citations_map: dict, db: AsyncSession) -> None
 
 
 async def _process_messages_citations(messages: list, db: AsyncSession) -> list:
-    citations_map: dict = {}
-    for m in messages:
-        if m.get("role") == "tool" and m.get("citations"):
-            citations = m["citations"]
-            if isinstance(citations, dict):
-                citations_map.update(citations)
+    from services.citation_history import turn_citation_maps
 
-    await _enrich_image_citations(citations_map, db)
+    # Each answer is resolved against the citation map of its own turn: older sessions
+    # reused citation keys across turns, so one merged map pointed old answers at later
+    # (sometimes other works') passages.
+    turn_maps = turn_citation_maps(messages)
+    distinct_metadata: dict = {}
+    for turn_map in turn_maps:
+        for metadata in turn_map.values():
+            if isinstance(metadata, dict):
+                distinct_metadata[id(metadata)] = metadata
+    await _enrich_image_citations(distinct_metadata, db)
 
-    max_display_num = 0
-    for metadata in citations_map.values():
-        dn = metadata.get("display_num", 0)
-        if dn > max_display_num:
-            max_display_num = dn
-    next_display_num = max_display_num + 1 if max_display_num > 0 else 1
+    parser = CitationParser(citation_map={}, start_display_num=1)
+    active_turn_map: dict | None = None
 
-    parser = CitationParser(citation_map=citations_map, start_display_num=next_display_num)
+    def _use_turn_map(turn_map: dict) -> None:
+        nonlocal active_turn_map
+        if turn_map is active_turn_map:
+            return
+        active_turn_map = turn_map
+        max_display_num = max(
+            (meta.get("display_num") or 0 for meta in turn_map.values() if isinstance(meta, dict)),
+            default=0,
+        )
+        parser.citation_map = turn_map
+        parser.id_to_display = {}
+        parser.display_num = max_display_num + 1
     processed_messages: list = []
 
     current_assistant_msg: dict | None = None
@@ -481,8 +493,9 @@ async def _process_messages_citations(messages: list, db: AsyncSession) -> list:
 
         return parts
 
-    for m in messages:
+    for message_index, m in enumerate(messages):
         role = m.get("role")
+        _use_turn_map(turn_maps[message_index])
 
         if role == "compact_divider":
             _flush_assistant()
@@ -640,6 +653,8 @@ async def get_session_messages(
 class ExportRequest(BaseModel):
     user_message_ids: Optional[List[str]] = None
     include_citations: bool = True
+    citation_style: str = "footnote"
+    output_language: Optional[str] = None
 
 
 @router.post("/sessions/{session_id}/export")
@@ -676,11 +691,16 @@ async def export_session(
         all_messages.append(msg_data)
 
     try:
+        from services.references import attach_reference_data
+
+        await attach_reference_data(db, [m.get("citations") for m in all_messages if m.get("role") == "tool"])
         docx_stream, filename = export_service.export_session_to_docx(
-            session_title=session.title or "\u5bf9\u8bdd\u5bfc\u51fa",
+            session_title=session.title or "",
             all_messages=all_messages,
             user_message_ids=body.user_message_ids,
             include_citations=body.include_citations,
+            citation_style=body.citation_style,
+            output_language=body.output_language,
         )
 
         from urllib.parse import quote
@@ -697,5 +717,5 @@ async def export_session(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception("\u5bfc\u51fa\u5931\u8d25")
-        raise HTTPException(status_code=500, detail="\u5bfc\u51fa\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5")
+        logger.exception("Export failed")
+        raise HTTPException(status_code=500, detail=ui_msg("export_failed"))

@@ -2,15 +2,17 @@ import { computed, reactive, ref, type ComputedRef, type Ref } from 'vue'
 import type { ImageFile } from '@/components/common/ImageGenerationModal.vue'
 import type { VideoFile, VideoGenerationConfig, VideoGenerationMode } from '@/components/common/VideoGenerationModal.vue'
 import {
+  createNote,
   deleteFeature,
   generateFeature,
   getFeature,
   getFeaturesStatusBatch,
   getProjectFeatures,
+  regenerateFeature,
   updateFeature,
   type FeatureListItem,
 } from '@/services/api'
-import type { Feature, FileInfo } from '@/types'
+import type { Feature, FileInfo, Message } from '@/types'
 import {
   IMAGE_GENERATION_FILE_TYPES,
   VIDEO_GENERATION_FILE_TYPES,
@@ -30,7 +32,14 @@ interface UseProjectFeaturesOptions {
   rightPanelWidthBeforeReport: Ref<number | null>
   reportMinWidth: number
   showToast: (message: string, type?: ToastType, duration?: number) => void
+  showConfirm: (options: { title: string; message: string; type?: 'info' | 'warning' | 'danger'; confirmText?: string; cancelText?: string }) => Promise<boolean>
   openRenameModal: (type: 'feature', id: string, name: string) => void
+}
+
+/** A 404/405 on an endpoint the UI knows about means the backend is still running older code. */
+function isOutdatedServerError(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response?.status
+  return status === 404 || status === 405
 }
 
 export function useProjectFeatures({
@@ -42,6 +51,7 @@ export function useProjectFeatures({
   rightPanelWidthBeforeReport,
   reportMinWidth,
   showToast,
+  showConfirm,
   openRenameModal,
 }: UseProjectFeaturesOptions) {
   const features = ref<FeatureListItem[]>([])
@@ -96,6 +106,103 @@ export function useProjectFeatures({
       }))
   )
 
+  const noteEditor = reactive({
+    visible: false,
+    saving: false,
+    /** Id of the manual note being edited; null when creating a new one. */
+    featureId: null as string | null,
+    title: '',
+    content: '',
+  })
+  const savingNoteMessageIds = ref<Set<string>>(new Set())
+
+  /** Saves a chat answer, with its citations, as a note in the results list. */
+  async function saveMessageAsNote(message: Message) {
+    if (!message.id || savingNoteMessageIds.value.has(message.id)) return
+    // Messages still waiting for their server id carry a numeric timestamp id.
+    if (/^\d+$/.test(message.id) || message.pending_id_sync) {
+      showToast(t('ui.networkSyncingTryLater'), 'warning')
+      return
+    }
+
+    savingNoteMessageIds.value.add(message.id)
+    try {
+      const note = await createNote(projectId, { messageId: message.id })
+      features.value.unshift(note)
+      showToast(t('ui.savedAsNote'), 'success')
+    } catch (error) {
+      console.error('Failed to save note:', error)
+      showToast(isOutdatedServerError(error) ? t('ui.serverOutdatedRestart') : t('ui.noteSaveFailed'), 'error', 6000)
+    } finally {
+      savingNoteMessageIds.value.delete(message.id)
+    }
+  }
+
+  function openNoteEditor() {
+    noteEditor.featureId = null
+    noteEditor.title = ''
+    noteEditor.content = ''
+    noteEditor.visible = true
+  }
+
+  function openNoteEditorForActiveFeature() {
+    const feature = activeFeature.value
+    if (!feature || feature.note_source !== 'manual') return
+    noteEditor.featureId = feature.id
+    noteEditor.title = feature.title || ''
+    noteEditor.content = feature.note_markdown || ''
+    noteEditor.visible = true
+  }
+
+  function closeNoteEditor() {
+    noteEditor.visible = false
+  }
+
+  async function submitNoteEditor(payload: { title: string; content: string }) {
+    noteEditor.saving = true
+    try {
+      if (noteEditor.featureId) {
+        const id = noteEditor.featureId
+        await updateFeature(id, { title: payload.title || undefined, content: payload.content })
+        const refreshed = await getFeature(id)
+        if (activeFeature.value?.id === id) activeFeature.value = refreshed
+        const item = features.value.find(f => f.id === id)
+        if (item) item.title = refreshed.title
+      } else {
+        const note = await createNote(projectId, { title: payload.title || undefined, content: payload.content })
+        features.value.unshift(note)
+      }
+      noteEditor.visible = false
+      showToast(t('ui.savedSuccessfully'), 'success')
+    } catch (error) {
+      console.error('Failed to save note:', error)
+      showToast(isOutdatedServerError(error) ? t('ui.serverOutdatedRestart') : t('ui.noteSaveFailed'), 'error', 6000)
+    } finally {
+      noteEditor.saving = false
+    }
+  }
+
+  /** Runs the open quick tool again in place, keeping its sources and prompt. */
+  async function regenerateActiveFeature() {
+    const feature = activeFeature.value
+    if (!feature) return
+
+    try {
+      const updated = await regenerateFeature(feature.id)
+      const index = features.value.findIndex(f => f.id === feature.id)
+      if (index !== -1) features.value[index] = { ...features.value[index]!, ...updated }
+      activeFeature.value = { ...feature, status: 'pending', error_message: null, blocks: [], citations: {} }
+      pollingFeatureIds.value.add(feature.id)
+      startFeaturePolling()
+      showToast(t('ui.regenerateStarted'), 'info')
+    } catch (error) {
+      console.error('Failed to regenerate feature:', error)
+      const status = (error as { response?: { status?: number } })?.response?.status
+      // 405 = route missing on an old server; 404 there can also mean the result was deleted.
+      showToast(status === 405 ? t('ui.serverOutdatedRestart') : t('ui.regenerateFailed'), 'error', 6000)
+    }
+  }
+
   const processingToolTypes = computed(() =>
     features.value
       .filter(f => f.status === 'pending' || f.status === 'processing')
@@ -142,7 +249,8 @@ export function useProjectFeatures({
               error_message: statusInfo.error_message,
               display_name: statusInfo.display_name ?? existingFeature.display_name,
               prompt: statusInfo.prompt ?? existingFeature.prompt,
-              title: statusInfo.title ?? existingFeature.title
+              title: statusInfo.title ?? existingFeature.title,
+              progress: statusInfo.progress ?? null
             }
           }
 
@@ -151,7 +259,8 @@ export function useProjectFeatures({
               ...activeFeature.value,
               status: statusInfo.status as Feature['status'],
               error_message: statusInfo.error_message,
-              title: statusInfo.title ?? activeFeature.value.title
+              title: statusInfo.title ?? activeFeature.value.title,
+              progress: statusInfo.progress ?? null
             }
           }
 
@@ -341,6 +450,14 @@ export function useProjectFeatures({
     }
   }
 
+  /** A deep research started from "Add source": show it and follow its progress. */
+  function handleDeepResearchStarted(item: FeatureListItem) {
+    if (!features.value.some(f => f.id === item.id)) features.value.unshift(item)
+    pollingFeatureIds.value.add(item.id)
+    startFeaturePolling()
+    showToast(t('ui.deepResearchStartedToast'), 'success', 4000)
+  }
+
   async function handleFeatureClick(featureItem: FeatureListItem) {
     try {
       const feature = await getFeature(featureItem.id)
@@ -394,22 +511,35 @@ export function useProjectFeatures({
     }
   }
 
+  /** Runs a result again with the sources and prompt it was created with (kept on the server). */
   async function handleRegenerateFeature(featureItem: FeatureListItem) {
     featureMenuId.value = null
 
     try {
-      await deleteFeature(featureItem.id)
-
-      features.value = features.value.filter(f => f.id !== featureItem.id)
-
-      await handleToolClick(featureItem.feature_type)
+      const updated = await regenerateFeature(featureItem.id)
+      const index = features.value.findIndex(f => f.id === featureItem.id)
+      if (index !== -1) features.value[index] = { ...features.value[index]!, ...updated }
+      pollingFeatureIds.value.add(featureItem.id)
+      startFeaturePolling()
     } catch (error) {
       console.error('Failed to regenerate feature:', error)
+      showToast(t('ui.regenerateFailed'), 'error')
     }
   }
 
   async function handleDeleteFeature(featureItem: FeatureListItem) {
     featureMenuId.value = null
+
+    const isNote = featureItem.feature_type === 'note'
+    const name = featureItem.title || featureItem.display_name || t(isNote ? 'ui.note' : 'ui.result')
+    const confirmed = await showConfirm({
+      title: t(isNote ? 'ui.deleteNoteTitle' : 'ui.deleteResultTitle'),
+      message: t(isNote ? 'ui.deleteNoteMessage' : 'ui.deleteResultMessage', { name }),
+      type: 'danger',
+      confirmText: t('ui.delete'),
+      cancelText: t('ui.cancel'),
+    })
+    if (!confirmed) return
 
     try {
       await deleteFeature(featureItem.id)
@@ -418,14 +548,17 @@ export function useProjectFeatures({
       if (activeFeature.value?.id === featureItem.id) {
         closeFeatureDetail()
       }
+      showToast(t('ui.itemDeleted', { name }), 'success')
     } catch (error) {
       console.error('Failed to delete feature:', error)
+      showToast(t('ui.deleteFailed'), 'error')
     }
   }
 
   return {
     features,
     activeFeature,
+    handleDeepResearchStarted,
     showFeatureDetail,
     featureMenuId,
     pollingFeatureIds,
@@ -453,5 +586,12 @@ export function useProjectFeatures({
     handleFeatureDetailRename,
     handleRegenerateFeature,
     handleDeleteFeature,
+    noteEditor,
+    saveMessageAsNote,
+    openNoteEditor,
+    openNoteEditorForActiveFeature,
+    closeNoteEditor,
+    submitNoteEditor,
+    regenerateActiveFeature,
   }
 }

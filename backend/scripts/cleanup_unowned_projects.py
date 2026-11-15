@@ -174,7 +174,8 @@ async def _delete_db_rows(project_ids: list[str]) -> dict[str, int]:
 
 
 def _delete_upload_dirs(project_ids: list[str], dry_run: bool) -> list[str]:
-    upload_dir = Path(os.getenv("UPLOAD_DIR", "./uploads"))
+    from paths import get_upload_dir
+    upload_dir = get_upload_dir()
     paths = [upload_dir / project_id for project_id in project_ids if (upload_dir / project_id).exists()]
     if not dry_run:
         for path in paths:
@@ -185,18 +186,17 @@ def _delete_upload_dirs(project_ids: list[str], dry_run: bool) -> list[str]:
 def _cleanup_milvus(project_ids: list[str], dry_run: bool) -> list[str]:
     try:
         from services.vector_service import (
-            MILVUS_URI,
+            _get_client,
             delete_projects_vectors,
             legacy_collection_names,
             shared_collection_names,
         )
-        from pymilvus import MilvusClient
     except Exception as exc:
         print(f"Milvus cleanup skipped: cannot import pymilvus ({exc})")
         return []
 
     try:
-        client = MilvusClient(uri=MILVUS_URI)
+        client = _get_client()
     except Exception as exc:
         print(f"Milvus cleanup skipped: cannot connect ({exc})")
         return []

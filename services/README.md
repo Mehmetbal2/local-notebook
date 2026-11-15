@@ -7,8 +7,8 @@ Each service runs independently and exposes an HTTP endpoint. The main backend c
 | Service | Default Port | Mode |
 |------|---------|------|
 | Embedding | 8001 | local service in this directory or API mode with OpenAI/Ollama-compatible services |
-| MinerU | 8002 | local service in this directory or API mode with mineru.net |
 | FunASR | 8003 | local service in this directory |
+| SearXNG | 8888 | Docker container started by `./start.sh` (web search); see [searxng/README.md](./searxng/README.md) |
 
 ---
 
@@ -25,19 +25,6 @@ MODEL=BAAI/bge-small-zh-v1.5 python server.py
 ```
 
 Endpoint: `POST http://localhost:8001/embeddings` (OpenAI-compatible)
-
----
-
-## MinerU Service
-
-```bash
-cd services/mineru
-pip install -r requirements.txt
-
-python server.py
-```
-
-Endpoint: `POST http://localhost:8002/parse` (multipart/form-data, field=`file`)
 
 ---
 
@@ -69,4 +56,4 @@ Endpoint: `POST http://localhost:8003/transcribe` (multipart/form-data, field=`f
 
 ## Settings Page
 
-After starting a service, enter its URL in local-Notebook frontend **Settings -> Embedding / MinerU / FunASR**. Changes take effect without restarting the main backend service.
+After starting a service, enter its URL in local-Notebook frontend **Settings -> Embedding / FunASR**. Changes take effect without restarting the main backend service.

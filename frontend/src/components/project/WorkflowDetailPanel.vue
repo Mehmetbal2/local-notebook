@@ -56,9 +56,8 @@
       </button>
 
 
-      <!-- MVP: 导出(/export)尚未实现，暂时隐藏 -->
       <button
-        v-if="false && (workflow.status === 'completed' || workflow.status === 'partial')"
+        v-if="workflow.status === 'completed' || workflow.status === 'partial'"
         class="panel-export-btn"
         :class="{ loading: isExporting }"
         :disabled="isExporting"
@@ -109,7 +108,7 @@
             <div class="feature-title-row">
               <span class="feature-section-index">{{ formatSectionIndex(fi) }}</span>
               <span class="feature-section-title">{{ feature.step_name }}</span>
-              <!-- MVP: 单栏目重新生成(/steps/regenerate)尚未实现，暂时隐藏 -->
+              <!-- Regenerating a single section (/steps/regenerate) is not implemented yet, so this stays hidden -->
               <button
                 v-if="false"
                 class="step-regenerate-btn"
@@ -135,6 +134,7 @@
                   v-if="processed.block.block_type === 'heading'"
                   :is="'h' + (processed.block.level || 2)"
                   class="feature-heading"
+                  dir="auto"
                 ><template v-for="(part, pi) in processed.block.content_parts" :key="pi"><span v-if="part.type === 'text'" class="feature-text" v-html="parseInlineMarkdown(part.content)"></span><span
                       v-else-if="part.type === 'citation_ref' && isWebCitation(part.citation_id, feature)"
                       class="inline-citation web-citation"
@@ -155,11 +155,12 @@
                 <div
                   v-else-if="processed.block.block_type === 'paragraph' && processed.block.extra?.is_table && parseMarkdownTable(getTableContent(processed.block), feature)"
                   class="feature-table"
+                  dir="auto"
                 >
                   <table>
                     <thead>
                       <tr>
-                        <th v-for="(header, hi) in parseMarkdownTable(getTableContent(processed.block), feature)!.headers" :key="hi">
+                        <th v-for="(header, hi) in parseMarkdownTable(getTableContent(processed.block), feature)!.headers" :key="hi" dir="auto">
                           <template v-for="(part, pi) in header.parts" :key="pi">
                             <span v-if="part.type === 'text'" v-html="parseInlineMarkdown(part.content || '')"></span>
 
@@ -186,7 +187,7 @@
                     </thead>
                     <tbody>
                       <tr v-for="(row, ri) in parseMarkdownTable(getTableContent(processed.block), feature)!.rows" :key="ri">
-                        <td v-for="(cell, ci) in row" :key="ci">
+                        <td v-for="(cell, ci) in row" :key="ci" dir="auto">
                           <template v-for="(part, pi) in cell.parts" :key="pi">
                             <span v-if="part.type === 'text'" v-html="parseInlineMarkdown(part.content || '')"></span>
 
@@ -215,7 +216,9 @@
                 </div>
 
 
-                <p v-else-if="processed.block.block_type === 'paragraph'" class="feature-paragraph">
+                <hr v-else-if="isRuleBlock(processed.block)" class="feature-rule" />
+
+                <p v-else-if="processed.block.block_type === 'paragraph'" class="feature-paragraph" dir="auto">
 
                   <template v-for="(part, pi) in processed.block.content_parts" :key="pi"><span v-if="part.type === 'text'" class="feature-text" v-html="parseInlineMarkdown(part.content)"></span><span
                       v-else-if="part.type === 'citation_ref' && isWebCitation(part.citation_id, feature)"
@@ -235,7 +238,7 @@
                 </p>
 
 
-                <blockquote v-else-if="processed.block.block_type === 'quote'" class="feature-quote"><template v-for="(part, pi) in processed.block.content_parts" :key="pi"><span v-if="part.type === 'text'" class="feature-text" v-html="parseInlineMarkdown(part.content)"></span><span
+                <blockquote v-else-if="processed.block.block_type === 'quote'" class="feature-quote" dir="auto"><template v-for="(part, pi) in processed.block.content_parts" :key="pi"><span v-if="part.type === 'text'" class="feature-text" v-html="parseInlineMarkdown(part.content)"></span><span
                       v-else-if="part.type === 'citation_ref' && isWebCitation(part.citation_id, feature)"
                       class="inline-citation web-citation"
                       :class="{ active: isCitationActive(part.display_num, feature.id) }"
@@ -284,11 +287,16 @@
                   <video v-if="processed.block.asset" :src="getAssetUrl(processed.block.asset.url)" controls :poster="processed.block.asset.thumbnail_url ? getAssetUrl(processed.block.asset.thumbnail_url) : undefined"></video>
                   <figcaption v-if="processed.block.caption">{{ processed.block.caption }}</figcaption>
                 </figure>
+
+                <figure v-else-if="processed.block.block_type === 'audio' && processed.block.asset?.url" class="feature-audio">
+                  <AudioPlayer :src="getAssetUrl(processed.block.asset.url)" />
+                  <figcaption v-if="processed.block.caption">{{ processed.block.caption }}</figcaption>
+                </figure>
               </template>
 
 
               <ul v-else-if="processed.type === 'list_group' && processed.blocks" class="feature-list">
-                <li v-for="(listBlock, li) in processed.blocks" :key="li"><template v-for="(part, pi) in listBlock.content_parts" :key="pi"><span v-if="part.type === 'text'" class="feature-text" v-html="parseInlineMarkdown(part.content)"></span><span
+                <li v-for="(listBlock, li) in processed.blocks" :key="li" dir="auto"><template v-for="(part, pi) in listBlock.content_parts" :key="pi"><span v-if="part.type === 'text'" class="feature-text" v-html="parseInlineMarkdown(part.content)"></span><span
                       v-else-if="part.type === 'citation_ref' && isWebCitation(part.citation_id, feature)"
                       class="inline-citation web-citation"
                       :class="{ active: isCitationActive(part.display_num, feature.id) }"
@@ -364,6 +372,8 @@ import type { WorkflowDetail, WorkflowStatus, WorkflowContentFeature } from '../
 import type { FeatureBlock, CitationMetadata } from '../../types'
 import { parseInlineMarkdown } from '../../utils'
 import { getAssetUrl, exportWorkflowToWord } from '../../services/api'
+import AudioPlayer from '../common/AudioPlayer.vue'
+import { isRuleBlock } from './feature/featureStructure'
 import { locale, t } from '../../i18n'
 
 import WebCitationTooltip from '../common/WebCitationTooltip.vue'
@@ -440,8 +450,9 @@ function hasPendingDependencies(feature: WorkflowContentFeature): boolean {
 function formatDependencyNames(names: string[]): string {
   const visibleNames = names.slice(0, 3)
   const suffix = names.length > visibleNames.length ? '...' : ''
-  const quotedNames = visibleNames.map(name => locale.value === 'en' ? `"${name}"` : `“${name}”`)
-  return quotedNames.join(locale.value === 'en' ? ', ' : '、') + suffix
+  const useWesternPunctuation = locale.value !== 'zh-CN'
+  const quotedNames = visibleNames.map(name => useWesternPunctuation ? `"${name}"` : `“${name}”`)
+  return quotedNames.join(useWesternPunctuation ? ', ' : '、') + suffix
 }
 
 function getFeatureWaitingText(feature: WorkflowContentFeature): string {
@@ -618,7 +629,7 @@ async function handleExportWord() {
 
     emit('showToast', t('ui.exportedSuccessfully'), 'success')
   } catch (error: any) {
-    console.error('导出失败:', error)
+    console.error('Export failed:', error)
     const message = error.response?.status === 429
       ? t('ui.tooManyRequestsTryAgainLater')
       : error.response?.status === 400
@@ -687,7 +698,7 @@ async function downloadImage(url: string) {
     document.body.removeChild(link)
     URL.revokeObjectURL(blobUrl)
   } catch (error) {
-    console.error('下载图片失败:', error)
+    console.error('Image download failed:', error)
   }
 }
 
@@ -925,8 +936,8 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
 }
 
 .workflow-detail-panel.theme-quick-read {
-  --workflow-accent: #2563eb;
-  --workflow-accent-strong: #1d4ed8;
+  --workflow-accent: var(--primary-color);
+  --workflow-accent-strong: var(--primary-hover);
   --workflow-accent-soft: rgba(147, 197, 253, 0.34);
   --workflow-accent-softer: rgba(96, 165, 250, 0.1);
   --workflow-accent-border: rgba(37, 99, 235, 0.24);
@@ -963,7 +974,7 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
   display: block;
   font-size: 16px;
   font-weight: 600;
-  color: #111827;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -980,7 +991,7 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
   background: transparent;
   border-radius: 6px;
   cursor: pointer;
-  color: #6b7280;
+  color: var(--text-tertiary);
   transition: all 0.2s;
 }
 
@@ -1022,14 +1033,14 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
   background: transparent;
   border-radius: 6px;
   cursor: pointer;
-  color: #6b7280;
+  color: var(--text-tertiary);
   transition: all 0.2s;
   margin-left: auto;
 }
 
 .panel-toggle-btn:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .workflow-status-badge {
@@ -1044,13 +1055,13 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
 }
 
 .workflow-status-badge.status-pending {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
 }
 
 .workflow-status-badge.status-processing {
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--primary-soft);
+  color: var(--primary-color);
   animation: breathing 1.6s ease-in-out infinite;
 }
 
@@ -1079,8 +1090,8 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
 }
 
 .workflow-status-badge.status-failed {
-  background: #fee2e2;
-  color: #dc2626;
+  background: var(--error-soft);
+  color: var(--error-color);
 }
 
 .workflow-status-badge.status-partial {
@@ -1089,8 +1100,8 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
 }
 
 .workflow-status-badge.status-cancelled {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
 }
 
 .panel-stop-btn {
@@ -1191,19 +1202,19 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
   gap: 6px;
   padding: 6px 10px;
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   cursor: pointer;
-  color: #6b7280;
+  color: var(--text-tertiary);
   font-size: 13px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   transition: all 0.2s;
 }
 
 .toc-toggle:hover {
-  background: #f9fafb;
-  color: #374151;
-  border-color: #d1d5db;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border-color: var(--border-strong);
 }
 
 .floating-toc.expanded .toc-toggle {
@@ -1222,7 +1233,7 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
   min-width: 200px;
   max-width: min(260px, calc(100vw - 48px));
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-color);
   border-top: none;
   border-radius: 0 0 8px 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -1236,15 +1247,15 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
   gap: 8px;
   padding: 8px 12px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--text-tertiary);
   cursor: pointer;
   transition: all 0.15s;
   border-left: 2px solid transparent;
 }
 
 .toc-item:hover {
-  background: #f9fafb;
-  color: #374151;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
 }
 
 .toc-item.active {
@@ -1330,9 +1341,9 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
   padding: 0 10px;
   font-size: 12px;
   font-weight: 500;
-  color: #6b7280;
+  color: var(--text-tertiary);
   background: transparent;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-color);
   border-radius: 9999px;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1340,31 +1351,31 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
 
 .step-regenerate-btn svg {
   transition: transform 0.4s ease;
-  color: #9ca3af;
+  color: var(--text-disabled);
 }
 
 .step-regenerate-btn:hover:not(:disabled) {
-  color: #2563eb;
-  background: #eff6ff;
+  color: var(--primary-color);
+  background: var(--info-soft);
   border-color: #bfdbfe;
   box-shadow: 0 1px 2px rgba(37, 99, 235, 0.1);
   transform: translateY(-0.5px);
 }
 
 .step-regenerate-btn:hover:not(:disabled) svg {
-  color: #2563eb;
+  color: var(--primary-color);
   transform: rotate(180deg);
 }
 
 .step-regenerate-btn:active:not(:disabled) {
   transform: translateY(0);
-  background: #dbeafe;
+  background: var(--primary-soft);
 }
 
 .step-regenerate-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background: #f9fafb;
+  background: var(--bg-secondary);
 }
 
 .feature-section-index {
@@ -1388,7 +1399,7 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
   font-size: 21px;
   font-weight: 750;
   line-height: 1.3;
-  color: #1f2937;
+  color: var(--text-primary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1400,7 +1411,7 @@ function parseMarkdownTable(content: string, feature: WorkflowContentFeature): P
 }
 
 .feature-heading {
-  color: #111827;
+  color: var(--text-primary);
   margin: 0 0 16px 0;
   line-height: 1.38;
   font-weight: 700;
@@ -1424,8 +1435,14 @@ h6.feature-heading {
   font-size: 15.5px;
 }
 
+.feature-rule {
+  margin: 20px 0;
+  border: none;
+  border-top: 1px solid var(--border-color);
+}
+
 .feature-paragraph {
-  color: #374151;
+  color: var(--text-secondary);
   font-size: 15px;
   line-height: 1.75;
   margin: 0 0 16px 0;
@@ -1434,16 +1451,16 @@ h6.feature-heading {
 .feature-quote {
   margin: 0 0 16px 0;
   padding: 12px 16px;
-  border-left: 4px solid #3b82f6;
-  background: #f8fafc;
-  color: #4b5563;
+  border-left: 4px solid var(--primary-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
   font-style: italic;
 }
 
 .feature-list {
   margin: 0 0 16px 0;
   padding-left: 24px;
-  color: #374151;
+  color: var(--text-secondary);
   font-size: 15px;
   line-height: 1.75;
 }
@@ -1496,7 +1513,7 @@ h6.feature-heading {
 .feature-image figcaption {
   margin-top: 8px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--text-tertiary);
   text-align: center;
 }
 
@@ -1518,7 +1535,7 @@ h6.feature-heading {
   width: 100%;
   margin-top: 8px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--text-tertiary);
   text-align: center;
 }
 
@@ -1534,7 +1551,22 @@ h6.feature-heading {
 .feature-video figcaption {
   margin-top: 8px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.feature-audio {
+  margin: 0 0 16px 0;
+}
+
+.feature-audio .audio-player {
+  width: 100%;
+}
+
+.feature-audio figcaption {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-tertiary);
   text-align: center;
 }
 
@@ -1547,8 +1579,8 @@ h6.feature-heading {
   padding: 0 5px;
   font-size: 11px;
   font-weight: 500;
-  color: #3b82f6;
-  background: #eff6ff;
+  color: var(--primary-color);
+  background: var(--info-soft);
   border-radius: 9px;
   cursor: pointer;
   vertical-align: middle;
@@ -1559,26 +1591,26 @@ h6.feature-heading {
 }
 
 .inline-citation:hover {
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--primary-soft);
+  color: var(--primary-color);
 }
 
 .inline-citation.active {
-  background: #3b82f6;
+  background: var(--primary-color);
   color: #fff;
 }
 
 
 .inline-citation.disabled {
-  color: #9ca3af;
-  background: #f3f4f6;
+  color: var(--text-disabled);
+  background: var(--bg-hover);
   cursor: not-allowed;
   position: relative;
 }
 
 .inline-citation.disabled:hover {
-  color: #9ca3af;
-  background: #f3f4f6;
+  color: var(--text-disabled);
+  background: var(--bg-hover);
 }
 
 
@@ -1589,7 +1621,7 @@ h6.feature-heading {
   left: 50%;
   transform: translateX(-50%);
   padding: 8px 12px;
-  background: #1f2937;
+  background: var(--text-primary);
   color: #fff;
   font-size: 12px;
   font-weight: 400;
@@ -1612,7 +1644,7 @@ h6.feature-heading {
   left: 50%;
   transform: translateX(-50%);
   border: 6px solid transparent;
-  border-top-color: #1f2937;
+  border-top-color: var(--text-primary);
   opacity: 0;
   visibility: hidden;
   transition: all 0.2s ease;
@@ -1636,11 +1668,11 @@ h6.feature-heading {
   padding: 0 5px;
   gap: 2px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+  background: linear-gradient(135deg, var(--info-soft) 0%, #bbdefb 100%);
   border: 1px solid #64b5f6;
   font-size: 11px;
   font-weight: 500;
-  color: #1976d2;
+  color: var(--primary-color);
   cursor: pointer;
   vertical-align: middle;
   margin-left: 3px;
@@ -1655,7 +1687,7 @@ h6.feature-heading {
 }
 
 .inline-citation.web-citation.active {
-  background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%);
+  background: linear-gradient(135deg, var(--primary-color) 0%, #1565c0 100%);
   border-color: #1565c0;
   color: #fff;
 }
@@ -1674,16 +1706,16 @@ h6.feature-heading {
 
 .workflow-feature-error {
   padding: 12px 16px;
-  background: #fef2f2;
+  background: var(--error-soft);
   border-radius: 8px;
-  color: #dc2626;
+  color: var(--error-color);
   font-size: 14px;
 }
 
 .workflow-empty {
   text-align: center;
   padding: 48px 24px;
-  color: #9ca3af;
+  color: var(--text-disabled);
 }
 
 .workflow-empty p {
@@ -1699,7 +1731,7 @@ h6.feature-heading {
 }
 
 .feature-text :deep(code) {
-  background: #f3f4f6;
+  background: var(--bg-hover);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: monospace;
@@ -1722,22 +1754,22 @@ h6.feature-heading {
 .feature-table th,
 .feature-table td {
   padding: 10px 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-color);
   text-align: left;
 }
 
 .feature-table th {
-  background: #f9fafb;
+  background: var(--bg-secondary);
   font-weight: 600;
-  color: #374151;
+  color: var(--text-secondary);
 }
 
 .feature-table tbody tr:nth-child(even) {
-  background: #f9fafb;
+  background: var(--bg-secondary);
 }
 
 .feature-table tbody tr:hover {
-  background: #f3f4f6;
+  background: var(--bg-hover);
 }
 
 
@@ -1750,23 +1782,23 @@ h6.feature-heading {
   padding: 0 4px;
   font-size: 10px;
   font-weight: 500;
-  color: #3b82f6;
-  background: #eff6ff;
+  color: var(--primary-color);
+  background: var(--info-soft);
   border-radius: 8px;
   cursor: pointer;
   vertical-align: middle;
 }
 
 .feature-table .inline-citation:hover {
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--primary-soft);
+  color: var(--primary-color);
 }
 
 
 .feature-table .inline-citation.web-citation {
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+  background: linear-gradient(135deg, var(--info-soft) 0%, #bbdefb 100%);
   border: 1px solid #64b5f6;
-  color: #1976d2;
+  color: var(--primary-color);
 }
 
 .feature-table .inline-citation.web-citation:hover {

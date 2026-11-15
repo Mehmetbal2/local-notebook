@@ -3,24 +3,25 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseParser, Block, ParseResult
+from utils.i18n import msg as ui_msg
 
 
-# 章节正文里按文档顺序提取的块级标签;table 单独处理为 markdown
+# Block-level tags extracted from chapter bodies in document order; tables are handled separately as markdown
 _BLOCK_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "pre", "table")
-# 用于「最外层块」判定:若某元素的祖先里出现这些标签,说明它是嵌套内容,跳过避免重复
+# Used to find outermost blocks: an element with one of these tags among its ancestors is nested content and is skipped to avoid duplicates
 _CONTAINER_TAGS = {"p", "li", "blockquote", "pre", "table"}
-# 不进入正文索引的标签
+# Tags excluded from the body text index
 _DROP_TAGS = ("script", "style", "nav", "header", "footer")
 
 
 class EpubParser(BaseParser):
-    """EPUB 解析器:按 OPF spine 的阅读顺序抽取结构化文本。
+    """EPUB parser: extracts structured text in the reading order of the OPF spine.
 
-    第一版只做「结构化文本抽取」,不做原始版式还原:
-    - 阅读顺序由 spine 决定,不依赖 zip 内文件名排序。
-    - page 统一为 0,章节信息(spine_index / href / chapter_title 等)放在 extra,
-      避免误用 PDF 的页码逻辑。
-    - 不抽取图片(images 返回空)。
+    This version only extracts structured text; it does not reproduce the original layout:
+    - Reading order comes from the spine, not from the order of file names in the zip.
+    - page is always 0; chapter info (spine_index / href / chapter_title etc.) goes in extra,
+      so PDF page-number logic is not misapplied.
+    - Images are not extracted (images is empty).
     """
 
     def get_supported_extensions(self) -> List[str]:
@@ -35,14 +36,12 @@ class EpubParser(BaseParser):
 
         try:
             book = epub.read_epub(file_path)
-        except Exception as exc:  # 坏文件 / 非法 zip / 缺 OPF
-            raise RuntimeError(
-                f"EPUB 解析失败,文件可能损坏或格式不规范: {exc}"
-            ) from exc
+        except Exception as exc:  # damaged file / invalid zip / missing OPF
+            raise RuntimeError(ui_msg("epub_corrupt", error=exc)) from exc
 
         href_to_title = self._build_toc_title_map(book)
 
-        # (content, block_type, extra) 三元组,保持全书阅读顺序
+        # (content, block_type, extra) triples in the book's reading order
         collected: List[Tuple[str, str, Dict[str, Any]]] = []
         chapter_index = 0
 
@@ -83,10 +82,7 @@ class EpubParser(BaseParser):
             chapter_index += 1
 
         if not collected:
-            raise RuntimeError(
-                "未能从 EPUB 中提取到正文文本。该文件可能是加密(DRM)、"
-                "固定版式或图片型 EPUB,暂不支持。"
-            )
+            raise RuntimeError(ui_msg("epub_no_text"))
 
         blocks, text = self._build_blocks(collected)
 
@@ -96,9 +92,9 @@ class EpubParser(BaseParser):
 
     @staticmethod
     def _iter_spine(book) -> List[Tuple[int, str, bool]]:
-        """返回 (spine_index, idref, linear) 列表,顺序即阅读顺序。
+        """Return a list of (spine_index, idref, linear) in reading order.
 
-        ebooklib 的 book.spine 元素可能是 (idref, 'yes'/'no') 元组,也可能是裸 idref。
+        ebooklib's book.spine items may be (idref, 'yes'/'no') tuples or bare idrefs.
         """
         result: List[Tuple[int, str, bool]] = []
         for index, entry in enumerate(book.spine or []):
@@ -115,19 +111,19 @@ class EpubParser(BaseParser):
 
     @staticmethod
     def _is_nav_document(item) -> bool:
-        # EPUB3 的导航文档是带 nav 属性的 XHTML,不应作为正文索引
+        # The EPUB3 navigation document is XHTML with the nav property and must not be indexed as body text
         props = getattr(item, "properties", None) or []
         return "nav" in props
 
-    # ── 目录标题映射 ──────────────────────────────────────────────────────────
+    # ── Table-of-contents title map ──────────────────────────────────────────────────────────
 
     def _build_toc_title_map(self, book) -> Dict[str, str]:
-        """从 toc(NCX / EPUB3 nav)构建 href(去锚点) -> 标题 的扁平映射。"""
+        """Build a flat href (without anchor) -> title map from the toc (NCX / EPUB3 nav)."""
         mapping: Dict[str, str] = {}
 
         def walk(nodes):
             for node in nodes:
-                # 可能是 Link,也可能是 (Section, [children]) 元组
+                # either a Link or a (Section, [children]) tuple
                 if isinstance(node, (tuple, list)):
                     for sub in node:
                         if isinstance(sub, (tuple, list)):
@@ -157,17 +153,17 @@ class EpubParser(BaseParser):
         href_to_title: Dict[str, str],
     ) -> Optional[str]:
         key = href.split("#", 1)[0]
-        # basename 也试一下,toc 的 href 可能带相对路径前缀
+        # also try the basename; toc hrefs may carry a relative path prefix
         title = href_to_title.get(key) or href_to_title.get(key.split("/")[-1])
         if title:
             return title
-        # 退而求其次:用章节第一个标题块
+        # fallback: use the chapter's first heading block
         for content, block_type, _ in chapter_blocks:
             if block_type == "heading" and content:
                 return content
         return None
 
-    # ── HTML -> 块 ────────────────────────────────────────────────────────────
+    # ── HTML -> blocks ────────────────────────────────────────────────────────────
 
     def _extract_chapter_blocks(
         self, raw: bytes
@@ -183,7 +179,7 @@ class EpubParser(BaseParser):
         blocks: List[Tuple[str, str, Dict[str, Any]]] = []
 
         for el in body.find_all(_BLOCK_TAGS):
-            # 只取最外层块,跳过嵌套在其它块里的元素,避免重复抽取
+            # take outermost blocks only; skip elements nested in other blocks to avoid extracting them twice
             if any(p.name in _CONTAINER_TAGS for p in el.parents):
                 continue
 
@@ -236,7 +232,7 @@ class EpubParser(BaseParser):
 
         return "\n".join(md_rows)
 
-    # ── 拼装 ──────────────────────────────────────────────────────────────────
+    # ── Assembly ──────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _build_blocks(
@@ -249,7 +245,7 @@ class EpubParser(BaseParser):
         for content, block_type, extra in collected:
             start_pos = position_offset
             end_pos = start_pos + len(content)
-            position_offset = end_pos + 1  # 与 "\n".join 的全文偏移保持一致
+            position_offset = end_pos + 1  # keep offsets consistent with the full text built by "\n".join
 
             blocks.append(
                 Block(

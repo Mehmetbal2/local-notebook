@@ -9,12 +9,14 @@ import {
   type Locale,
 } from './config'
 import en from './locales/en'
+import tr from './locales/tr'
 import zhCN from './locales/zh-CN'
 
 export { localeConfig, type Locale } from './config'
 
 const messages = {
   'zh-CN': zhCN,
+  tr,
   en,
 } as const
 

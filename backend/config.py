@@ -72,78 +72,83 @@ def get_all_cached() -> dict[str, Optional[str]]:
     return dict(_cache)
 
 
-BAILIAN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+PDF_ENGINES = ("auto", "local", "ocr")
 
 
-async def resolve_mineru_config() -> tuple[bool, str, str | None, str | None]:
-    source = await get_setting("mineru_source", "api")
-
-    if source == "local":
-        base_url = await get_setting("mineru_base_url", "")
-        if base_url and base_url.strip():
-            return True, "local", base_url.strip().rstrip("/"), None
-        return False, "local", None, None
-
-    api_key = await get_setting("mineru_api_key", "")
-    if api_key and api_key.strip():
-        return True, "api", None, api_key.strip()
-    return False, "api", None, None
+async def resolve_pdf_engine() -> str:
+    """Which parser handles PDFs: 'auto', 'local' (PyMuPDF) or 'ocr' (the configured OCR service)."""
+    value = (await get_setting("pdf_engine", "auto") or "auto").strip().lower()
+    return value if value in PDF_ENGINES else "auto"
 
 
-async def resolve_funasr_config() -> tuple[bool, str | None]:
-    base_url = await get_setting("funasr_base_url", "")
-    if base_url and base_url.strip():
-        return True, base_url.strip().rstrip("/")
-    return False, None
+async def resolve_ocr_config() -> tuple[bool, str | None, str | None, str | None]:
+    api_key = (await get_setting("ocr_api_key", "") or "").strip()
+    base_url = (await get_setting("ocr_base_url", "") or "").strip().rstrip("/")
+    model = (await get_setting("ocr_model", "") or "").strip()
+    enabled = bool(api_key and base_url and model)
+    return enabled, base_url or None, model or None, api_key or None
 
 
-BOCHA_BASE_URL = "https://api.bochaai.com/v1"
+async def resolve_funasr_config() -> tuple[bool, str | None, str | None, str | None]:
+    api_key = (await get_setting("funasr_api_key", "") or "").strip()
+    base_url = (await get_setting("funasr_base_url", "") or "").strip().rstrip("/")
+    model = (await get_setting("funasr_model", "") or "").strip()
+    enabled = bool(api_key and base_url and model)
+    return enabled, base_url or None, model or None, api_key or None
 
-async def resolve_web_search_config() -> tuple[bool, str | None, str | None]:
-    api_key = await get_setting("bocha_api_key", "")
 
-    enabled = bool(api_key and api_key.strip())
-    return enabled, api_key.strip() if api_key else None, BOCHA_BASE_URL
+async def resolve_tts_config() -> tuple[bool, str | None, str | None, str | None, str]:
+    api_key = (await get_setting("tts_api_key", "") or "").strip()
+    base_url = (await get_setting("tts_base_url", "") or "").strip().rstrip("/")
+    model = (await get_setting("tts_model", "") or "").strip()
+    voice = (await get_setting("tts_voice", "deniz") or "deniz").strip() or "deniz"
+    enabled = bool(api_key and base_url and model)
+    return enabled, base_url or None, model or None, api_key or None, voice
+
+
+DEFAULT_SEARXNG_URL = os.getenv("SEARXNG_URL") or f"http://127.0.0.1:{os.getenv('SEARXNG_PORT', '8888')}"
+
+
+async def resolve_searxng_url() -> str:
+    """Address of the local SearXNG instance used for all web search."""
+    return (await get_setting("searxng_base_url", "") or "").strip().rstrip("/") or DEFAULT_SEARXNG_URL
+
+
+async def resolve_web_search_config() -> tuple[bool, str]:
+    """(enabled, base_url). Web search counts as enabled only while SearXNG answers."""
+    from services.searxng_client import is_reachable
+
+    base_url = await resolve_searxng_url()
+    return await is_reachable(base_url), base_url
 
 
 async def resolve_llm_config() -> tuple[str | None, str | None, str | None]:
-    source = await get_setting("llm_source", "")
-
-    if source == "custom":
-        api_key = await get_setting("llm_api_key", "")
-        base_url = await get_setting("llm_base_url", "")
-        model = await get_setting("llm_model", "")
-        return api_key or None, base_url or None, model or None
-
-    api_key = await get_setting("bailian_api_key", "")
-    model = await get_setting("llm_bailian_model", "")
-    return api_key or None, BAILIAN_BASE_URL, model or None
+    api_key = await get_setting("llm_api_key", "")
+    base_url = await get_setting("llm_base_url", "")
+    model = await get_setting("llm_model", "")
+    return api_key or None, base_url or None, model or None
 
 
 async def resolve_llm_provider_config() -> tuple[str | None, str | None, str | None, str]:
     api_key, base_url, model = await resolve_llm_config()
-    source = await get_setting("llm_source", "")
-    if source == "custom":
-        api_format = await get_setting("llm_api_format", "openai")
-    else:
-        api_format = "openai"
+    api_format = await get_setting("llm_api_format", "openai")
     return api_key, base_url, model, api_format or "openai"
 
 
 async def is_easy_task_llm_configured() -> bool:
-    """用户是否单独配置了「简单任务模型」(节省计划开关是否实际生效)。
+    """Whether the user configured a separate "simple task model" (i.e. the saving plan is actually in effect).
 
-    为空表示简单任务与主 LLM 共用同一个模型。
+    Empty means simple tasks share the main LLM's model.
     """
     easy_model = await get_setting("easy_task_llm", "")
     return bool(easy_model and easy_model.strip())
 
 
 async def resolve_easy_task_llm_config() -> tuple[str | None, str | None, str | None]:
-    """「节省计划」:简单任务(解析时的摘要生成)用的 LLM 配置。
+    """"Saving plan": the LLM configuration for simple tasks (summaries generated while parsing).
 
-    复用主 LLM 的 provider(key + base_url),仅在配置了 easy_task_llm 时替换模型名;
-    未配置则与主 LLM 完全一致,即简单任务和复杂任务共用一个模型。
+    Reuses the main LLM provider (key + base_url) and only swaps the model name when easy_task_llm is set;
+    otherwise it matches the main LLM, so simple and complex tasks share one model.
     """
     api_key, base_url, model = await resolve_llm_config()
     if await is_easy_task_llm_configured():
@@ -160,26 +165,14 @@ async def resolve_easy_task_llm_provider_config() -> tuple[str | None, str | Non
 
 
 async def resolve_vlm_config() -> tuple[str | None, str | None, str | None]:
-    source = await get_setting("vlm_source", "")
-
-    if source == "custom":
-        api_key = await get_setting("vlm_api_key", "")
-        base_url = await get_setting("vlm_base_url", "")
-        model = await get_setting("vlm_model", "")
-        return api_key or None, base_url or None, model or None
-
-    api_key = await get_setting("bailian_api_key", "")
-    model = await get_setting("vlm_bailian_model", "")
-    return api_key or None, BAILIAN_BASE_URL, model or None
+    api_key = await get_setting("vlm_api_key", "")
+    base_url = await get_setting("vlm_base_url", "")
+    model = await get_setting("vlm_model", "")
+    return api_key or None, base_url or None, model or None
 
 
 async def resolve_embedding_config() -> tuple[str, str, str, str]:
-    source = await get_setting("embedding_source", "bailian")
-
-    if source == "local":
-        base_url = await get_setting("embedding_base_url", "")
-        model = await get_setting("embedding_model", "")
-        return "local", base_url or "", model or "", "local"
+    source = await get_setting("embedding_source", "local")
 
     if source == "custom":
         base_url = await get_setting("embedding_base_url", "")
@@ -187,6 +180,6 @@ async def resolve_embedding_config() -> tuple[str, str, str, str]:
         api_key = await get_setting("embedding_api_key", "")
         return "api", base_url or "", model or "", api_key or ""
 
-    api_key = await get_setting("bailian_api_key", "")
-    model = await get_setting("embedding_bailian_model", "")
-    return "api", BAILIAN_BASE_URL, model or "", api_key or ""
+    base_url = await get_setting("embedding_base_url", "")
+    model = await get_setting("embedding_model", "")
+    return "local", base_url or "", model or "", "local"

@@ -1,10 +1,15 @@
 import asyncio
 import base64
+import logging
 import os
 import re
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 from .base import BaseParser, Block, ParseResult
+from utils.i18n import msg as ui_msg
+
+logger = logging.getLogger("parsers.pdf")
 
 
 class PDFParser(BaseParser):
@@ -32,60 +37,57 @@ class PDFParser(BaseParser):
 
     async def parse(self, file_path: str, file_id: str | None = None, db=None) -> ParseResult:
         import config
-        from services.mineru_client import MinerUClient, MinerUCloudClient
 
-        enabled, source, base_url, api_key = await config.resolve_mineru_config()
-        if not enabled:
-            raise RuntimeError(
-                "PDF 解析需要 MinerU 服务。请在「设置 → MinerU」配置服务地址或 API Key 后重试。"
-            )
+        engine = await config.resolve_pdf_engine()
+        enabled, base_url, model, api_key = await config.resolve_ocr_config()
+        ocr_ready = bool(enabled and base_url and model and api_key)
 
-        if source == "api":
-            existing_batch_id = None
-            batch_created_at = None
+        if engine == "ocr":
+            if not ocr_ready:
+                raise RuntimeError(ui_msg("ocr_not_configured"))
+            return await self._parse_with_ocr(file_path, base_url, model, api_key)
 
-            if file_id and db:
-                from models.file import File
-                db_file = await db.get(File, file_id)
-                if db_file and db_file.mineru_batch_id:
-                    existing_batch_id = db_file.mineru_batch_id
-                    batch_created_at = db_file.mineru_batch_created
+        if engine == "local":
+            return await self._parse_locally(file_path, file_id)
 
-            img_dir = os.path.join(os.path.dirname(file_path), "images", file_id) if file_id else None
-            client = MinerUCloudClient(api_key)
-            result, batch_id = await client.parse_pdf(
-                file_path,
-                existing_batch_id=existing_batch_id,
-                batch_created_at=batch_created_at,
-                image_output_dir=img_dir,
-            )
+        # auto: local for PDFs with a text layer, OCR for scans; local is also the
+        # fallback when no OCR service is configured.
+        from .pymupdf_parser import has_text_layer
 
-            if batch_id and file_id:
-                from datetime import datetime, timezone
-                from database import AsyncSessionLocal
-                from models.file import File
-                async with AsyncSessionLocal() as short_db:
-                    db_file = await short_db.get(File, file_id)
-                    if db_file:
-                        db_file.mineru_batch_id = batch_id
-                        if not existing_batch_id or existing_batch_id != batch_id:
-                            db_file.mineru_batch_created = datetime.now(timezone.utc)
-                        await short_db.commit()
+        try:
+            text_layer, _ = await asyncio.to_thread(has_text_layer, file_path)
+        except RuntimeError:
+            text_layer = False
+            if not ocr_ready:
+                raise
+        if text_layer or not ocr_ready:
+            try:
+                return await self._parse_locally(file_path, file_id)
+            except Exception as exc:
+                if not ocr_ready:
+                    raise
+                logger.warning("Local PDF parse failed, falling back to the OCR service: %s", exc)
+        return await self._parse_with_ocr(file_path, base_url, model, api_key)
 
-            img_path_mapping = result.images or {}
-        else:
-            client = MinerUClient(base_url)
-            result = await client.parse_pdf(file_path)
+    async def _parse_locally(self, file_path: str, file_id: str | None) -> ParseResult:
+        from .pymupdf_parser import PyMuPDFParser
 
-            img_dir = os.path.join(os.path.dirname(file_path), "images", file_id) if file_id else os.path.join(os.path.dirname(file_path), "images")
-            img_path_mapping = {}
-            if result.images:
-                img_path_mapping = await asyncio.to_thread(
-                    self._save_images_from_base64, result.images, img_dir
-                )
+        image_dir = Path(file_path).parent / "images" / file_id if file_id else None
+        parser = PyMuPDFParser(image_dir=image_dir)
+        result = await asyncio.to_thread(parser.parse, file_path)
+        if not result.blocks:
+            raise RuntimeError(ui_msg("pdf_no_text"))
+        return result
+
+    async def _parse_with_ocr(self, file_path: str, base_url: str, model: str, api_key: str) -> ParseResult:
+        from services.ocr_client import PDFOCRClient
+
+        client = PDFOCRClient(base_url=base_url, api_key=api_key, model=model)
+        result = await client.parse_pdf(file_path)
+        img_path_mapping: dict = {}
 
         if not result.success:
-            raise RuntimeError(f"PDF 解析失败: {result.error_message}")
+            raise RuntimeError(ui_msg("ocr_parse_failed", error=result.error_message))
 
         blocks = []
         extracted_images = []
@@ -287,7 +289,9 @@ class PDFParser(BaseParser):
                     extra["level"] = text_level
                 else:
                     text_stripped = text.strip()
-                    if text_stripped.startswith(("-", "*", "+")) or \
+                    if self._is_markdown_table(text_stripped):
+                        extra["is_table"] = True
+                    elif text_stripped.startswith(("-", "*", "+")) or \
                        re.match(r'^\d+\.\s', text_stripped):
                         block_type = "list"
 
@@ -369,13 +373,18 @@ class PDFParser(BaseParser):
 
         return blocks
 
+    @staticmethod
+    def _is_markdown_table(text: str) -> bool:
+        if not text.startswith("|") or "|" not in text:
+            return False
+        lines = [line for line in text.split("\n") if line.strip()]
+        return len(lines) >= 2 and all("|" in line for line in lines)
+
     def _detect_block_type(self, text: str) -> Tuple[str, Optional[Dict]]:
         text_stripped = text.strip()
 
-        if text_stripped.startswith("|") and "|" in text_stripped:
-            lines = text_stripped.split("\n")
-            if len(lines) >= 2 and all("|" in line for line in lines):
-                return "paragraph", {"is_table": True}
+        if self._is_markdown_table(text_stripped):
+            return "paragraph", {"is_table": True}
 
         if text_stripped.startswith("$$") and text_stripped.endswith("$$"):
             return "paragraph", {"is_formula": True}

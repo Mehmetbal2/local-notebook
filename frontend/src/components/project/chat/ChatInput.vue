@@ -5,18 +5,45 @@
         <textarea
           ref="textareaRef"
           :value="inputMessage"
-          :placeholder="hasReadyFiles ? $t('ui.whatWouldYouLikeToAsk') : $t('ui.uploadSourcesToGetStarted')"
-          :disabled="!hasCurrentSession || isStreaming || !hasReadyFiles"
+          :placeholder="generalChat ? $t('ui.generalChatPlaceholder') : $t('ui.whatWouldYouLikeToAsk')"
+          :disabled="!hasCurrentSession || isStreaming"
           rows="1"
           @input="handleInput"
           @keydown.enter.exact.prevent="emit('send-enter')"
           @compositionstart="emit('composition-start')"
           @compositionend="emit('composition-end')"
         ></textarea>
+        <div v-if="dictation.supported" class="dictation" :class="dictation.state.value">
+          <template v-if="dictation.state.value === 'recording'">
+            <span class="dictation-timer" aria-live="off">
+              <span class="dictation-dot" aria-hidden="true"></span>{{ formatElapsed(dictation.elapsed.value) }}
+            </span>
+            <button type="button" class="dictation-btn" :title="$t('ui.dictationCancel')" :aria-label="$t('ui.dictationCancel')" @click="dictation.cancel()">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+            <button type="button" class="dictation-btn dictation-stop" :title="$t('ui.dictationStop')" :aria-label="$t('ui.dictationStop')" @click="dictation.stop()">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            </button>
+          </template>
+          <span v-else-if="dictation.state.value === 'transcribing'" class="dictation-busy" role="status">
+            <span class="dictation-spinner" aria-hidden="true"></span>{{ $t('ui.dictationTranscribing') }}
+          </span>
+          <button
+            v-else
+            type="button"
+            class="dictation-btn"
+            :disabled="!hasCurrentSession || isStreaming"
+            :title="$t('ui.dictationStart')"
+            :aria-label="$t('ui.dictationStart')"
+            @click="dictation.start()"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+          </button>
+        </div>
         <button
           v-if="!isStreaming"
           class="send-btn"
-          :disabled="!inputMessage.trim() || !hasCurrentSession || !hasReadyFiles"
+          :disabled="!inputMessage.trim() || !hasCurrentSession"
           :title="$t('ui.send')"
           @click="emit('send-message')"
         >
@@ -48,26 +75,41 @@
           <span>{{ $t('ui.webSearch') }}</span>
         </div>
 
-        <span class="source-count">{{ $t('ui.sourceCount', { count: sourceCount }) }}</span>
+        <span
+          v-if="generalChat"
+          class="general-chat-chip"
+          :data-tooltip="$t('ui.generalChatBadgeTooltip')"
+          :aria-label="$t('ui.generalChatBadgeTooltip')"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+          </svg>
+          {{ $t('ui.generalChatBadge') }}
+        </span>
+        <span v-else class="source-count">{{ $t('ui.sourceCount', { count: sourceCount }) }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { t } from '@/i18n'
+import { useVoiceDictation } from '@/composables/useVoiceDictation'
 
 interface Props {
   inputMessage: string
   webSearchConfigured: boolean
   sourceCount: number
+  /** No sources selected: questions go to general chat. */
+  generalChat: boolean
   hasReadyFiles: boolean
   hasCurrentSession: boolean
   isStreaming: boolean
   isExportSelectionMode: boolean
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
 
 const emit = defineEmits<{
   'update:inputMessage': [value: string]
@@ -91,6 +133,49 @@ defineExpose({
   }
 })
 
+// ---- Dictation: speak, and the transcript is inserted where the cursor is ----
+const dictation = useVoiceDictation({
+  onText: insertDictatedText,
+  onError: (message) => window.dispatchEvent(new CustomEvent('global-toast', { detail: { message, type: 'warning' } })),
+  messages: {
+    permission: t('ui.dictationNoMicrophone'),
+    failed: t('ui.dictationFailed'),
+    empty: t('ui.dictationNothingHeard'),
+  },
+})
+
+function insertDictatedText(text: string) {
+  const textarea = textareaRef.value
+  const current = props.inputMessage || ''
+  const start = textarea ? textarea.selectionStart ?? current.length : current.length
+  const end = textarea ? textarea.selectionEnd ?? current.length : current.length
+  const before = current.slice(0, start)
+  const after = current.slice(end)
+  const spacerBefore = before && !/\s$/.test(before) ? ' ' : ''
+  const spacerAfter = after && !/^\s/.test(after) ? ' ' : ''
+  const next = `${before}${spacerBefore}${text}${spacerAfter}${after}`
+  emit('update:inputMessage', next)
+  emit('auto-resize')
+  const caret = (before + spacerBefore + text).length
+  requestAnimationFrame(() => {
+    textarea?.focus()
+    textarea?.setSelectionRange(caret, caret)
+  })
+}
+
+function formatElapsed(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && dictation.state.value === 'recording') {
+    event.stopPropagation()
+    dictation.cancel()
+  }
+}
+onMounted(() => document.addEventListener('keydown', onKeydown, true))
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown, true))
+
 function handleInput(event: Event) {
   emit('update:inputMessage', (event.target as HTMLTextAreaElement).value)
   emit('auto-resize')
@@ -99,7 +184,7 @@ function handleInput(event: Event) {
 
 <style scoped>
 .chat-input-wrapper {
-  padding: 10px 14px;
+  padding: 8px 20px 16px;
   position: relative;
 }
 
@@ -111,16 +196,20 @@ function handleInput(event: Event) {
 .chat-input-box {
   display: flex;
   flex-direction: column;
-  padding: 10px 14px;
-  background: var(--bg-main);
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 12px 12px 10px 18px;
+  background: var(--bg-white);
   border: 1px solid var(--border-color);
-  border-radius: 20px;
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  transition: border-color 0.15s, box-shadow 0.2s;
 }
 
 .chat-input-box:focus-within {
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px var(--primary-light);
+  box-shadow: var(--shadow-md), var(--focus-ring);
 }
 
 .input-main-row {
@@ -141,6 +230,108 @@ function handleInput(event: Event) {
   overflow-y: auto;
 }
 
+.dictation {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.dictation-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.dictation-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.dictation-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dictation-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.dictation-stop {
+  background: var(--primary-color);
+  color: #fff;
+}
+
+.dictation-stop:hover:not(:disabled) {
+  background: var(--primary-hover, var(--primary-color));
+  color: #fff;
+}
+
+.dictation-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--error-color);
+}
+
+.dictation-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--error-color);
+  animation: dictation-pulse 1.2s ease-in-out infinite;
+}
+
+.dictation-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.dictation-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: dictation-spin 0.8s linear infinite;
+}
+
+@keyframes dictation-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes dictation-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dictation-dot,
+  .dictation-spinner {
+    animation: none;
+  }
+}
+
 .input-main-row textarea:focus {
   box-shadow: none;
 }
@@ -150,8 +341,49 @@ function handleInput(event: Event) {
   align-items: center;
   justify-content: space-between;
   padding-top: 8px;
-  margin-top: 8px;
-  border-top: 1px solid var(--border-light);
+  margin-top: 4px;
+}
+
+.general-chat-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: var(--warning-soft);
+  color: var(--warning-color);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.general-chat-chip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: 280px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--bg-inverse);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  z-index: 20;
+}
+
+.general-chat-chip:hover::after {
+  opacity: 1;
+  visibility: visible;
 }
 
 .source-count {
@@ -177,7 +409,9 @@ function handleInput(event: Event) {
 }
 
 .send-btn:disabled {
-  background: var(--text-disabled);
+  background: var(--bg-tertiary);
+  color: var(--text-disabled);
+  opacity: 1;
   border-radius: 50%;
 }
 
@@ -197,8 +431,8 @@ function handleInput(event: Event) {
 }
 
 .web-search-tool.active {
-  background: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
+  background: var(--primary-light);
+  color: var(--primary-color);
 }
 
 .web-search-tool svg {
@@ -222,7 +456,7 @@ function handleInput(event: Event) {
   width: max-content;
   max-width: 260px;
   padding: 7px 10px;
-  background: #1f2937;
+  background: var(--text-primary);
   color: #fff;
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
@@ -239,7 +473,7 @@ function handleInput(event: Event) {
   bottom: calc(100% + 3px);
   width: 10px;
   height: 5px;
-  background: #1f2937;
+  background: var(--text-primary);
   clip-path: polygon(50% 100%, 0 0, 100% 0);
   transform: translateY(4px);
 }

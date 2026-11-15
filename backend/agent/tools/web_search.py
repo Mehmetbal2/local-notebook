@@ -1,8 +1,8 @@
+import asyncio
 import json
 import logging
 from typing import Optional
 
-import httpx
 from pydantic import BaseModel, Field
 
 from kosong.tooling import CallableTool2, ToolOk, ToolError, ToolReturnValue
@@ -10,6 +10,11 @@ from kosong.tooling import CallableTool2, ToolOk, ToolError, ToolReturnValue
 from agent.tools.query_knowledge_base import CitationState
 
 logger = logging.getLogger("tool.web_search")
+
+# How many of the top SearXNG hits are opened to read their text.
+SEARXNG_PAGES_TO_READ = 3
+SEARXNG_PAGE_TIMEOUT = 8.0
+EXCERPT_CHARS = 1500
 
 
 class WebSearchParams(BaseModel):
@@ -36,98 +41,132 @@ class WebSearchTool(CallableTool2[WebSearchParams]):
     def __init__(
         self,
         citation_state: Optional[CitationState] = None,
-        api_key: str = "",
         base_url: str = "",
     ):
         super().__init__()
         self.state = citation_state or CitationState()
-        self.api_key = api_key
         self.base_url = base_url
+
+    @classmethod
+    async def create(cls, citation_state: Optional[CitationState] = None) -> "WebSearchTool":
+        """Build the tool for the SearXNG address configured in Settings."""
+        import config
+
+        return cls(citation_state=citation_state, base_url=await config.resolve_searxng_url())
 
     async def __call__(self, params: WebSearchParams) -> ToolReturnValue:
         query = params.query.strip()
         if not query:
             return ToolError(message="Search query must not be empty", brief="empty query")
+        max_results = max(1, min(int(params.max_results or 5), 10))
+        return await self._searxng(query, max_results, params.freshness)
 
-        if not self.api_key:
-            return ToolError(message="Web search is not configured. Add the Bocha API key in Settings.", brief="not configured")
+    # ── citations ──────────────────────────────────────────────────────────
 
-        max_results = params.max_results
-        freshness = params.freshness
+    def _add_result(self, results: list, *, title: str, url: str, snippet: str, source: str,
+                    published_date: str, content: str = "") -> None:
+        state = self.state
+        citation_id = f"citation_{state.citation_counter}"
+        entry = {
+            "citation_id": f"[{citation_id}]",
+            "title": title,
+            "url": url,
+            "snippet": snippet[:300] if snippet else "",
+            "source": source,
+            "published_date": published_date,
+        }
+        if content:
+            entry["page_text"] = content
+        results.append(entry)
+        state.citations_map[citation_id] = {
+            "type": "web",
+            "title": title,
+            "url": url,
+            "snippet": (content or snippet or "")[:500],
+            "source": source,
+            "published_date": published_date,
+            "favicon": "",
+        }
+        state.citation_counter += 1
+
+    # ── SearXNG (local metasearch) ─────────────────────────────────────────
+
+    async def _searxng(self, query: str, max_results: int, freshness: str) -> ToolReturnValue:
+        from services import searxng_client as sx
 
         try:
-            logger.info(f"联网搜索: {query}")
-
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{self.base_url}/web-search",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "query": query,
-                        "count": max_results,
-                        "freshness": freshness,
-                        "summary": True,
-                    },
+            logger.info(f"web search (searxng): {query}")
+            hits = await sx.search(
+                self.base_url,
+                query,
+                time_range=sx.FRESHNESS_TO_TIME_RANGE.get(freshness),
+            )
+        except sx.SearxngError as exc:
+            if exc.code == "unreachable":
+                msg = (
+                    f"Web search is unavailable: SearXNG does not answer at {self.base_url}. "
+                    "Docker/OrbStack may be closed. Tell the user web search is offline."
                 )
+            elif exc.code == "json_disabled":
+                msg = "SearXNG refused the JSON API (enable `json` under search.formats in settings.yml)."
+            elif exc.code == "rate_limited":
+                msg = "SearXNG rate limit reached. Try again shortly."
+            elif exc.code == "timeout":
+                msg = "Search request timed out. Try again later."
+            else:
+                msg = f"Search request failed: {exc}"
+            return ToolError(message=msg, brief=exc.code)
 
-            if resp.status_code != 200:
-                error_detail = ""
-                try:
-                    error_detail = resp.json().get("message", "")
-                except Exception:
-                    pass
-                return ToolError(
-                    message=f"Search request failed (status code: {resp.status_code}) {error_detail}",
-                    brief="request failed",
-                )
+        hits = hits[:max_results]
+        if not hits:
+            return ToolOk(output="No relevant search results found")
 
-            data = resp.json()
-            web_pages = data.get("data", {}).get("webPages", {}).get("value", [])
+        # Read the text of the top pages so answers rest on more than a snippet.
+        async def read(hit):
+            try:
+                # Scholarly hits often carry a free PDF: read that instead of the abstract page.
+                target = hit.pdf_url or hit.url
+                page = await asyncio.wait_for(sx.fetch_page(target, timeout=SEARXNG_PAGE_TIMEOUT), SEARXNG_PAGE_TIMEOUT + 2)
+            except Exception as exc:  # unreachable pages just keep their snippet
+                logger.debug(f"page not read ({hit.url}): {exc}")
+                return ""
+            if page.is_pdf:
+                return await asyncio.to_thread(_pdf_text, page.pdf_bytes or b"", query)
+            return sx.relevant_excerpt(page.text, query, EXCERPT_CHARS) if page.text else ""
 
-            if not web_pages:
-                return ToolOk(output="No relevant search results found")
+        texts = await asyncio.gather(*(read(h) for h in hits[:SEARXNG_PAGES_TO_READ]))
+        texts = list(texts) + [""] * (len(hits) - len(texts))
 
-            state = self.state
-            results = []
-            for item in web_pages:
-                citation_id = f"citation_{state.citation_counter}"
+        results: list = []
+        for hit, text in zip(hits, texts):
+            self._add_result(
+                results,
+                title=hit.title,
+                url=hit.url,
+                snippet=hit.content,
+                source=hit.domain,
+                published_date=hit.published_date,
+                content=text,
+            )
+        logger.info(f"Search succeeded, got {len(results)} results ({sum(1 for t in texts if t)} pages read)")
+        return ToolOk(output=json.dumps(results, ensure_ascii=False))
 
-                title = item.get("name", "Untitled")
-                url = item.get("url", "")
-                snippet = item.get("summary") or item.get("snippet", "")
-                source = item.get("siteName", "")
-                published_date = item.get("datePublished", "")
-                favicon = item.get("siteIcon", "")
 
-                results.append({
-                    "citation_id": f"[{citation_id}]",
-                    "title": title,
-                    "snippet": snippet[:300] if snippet else "",
-                    "source": source,
-                    "published_date": published_date,
-                })
+def _pdf_text(data: bytes, query: str) -> str:
+    """Relevant text from the first pages of a PDF search hit."""
+    from services.searxng_client import relevant_excerpt
 
-                state.citations_map[citation_id] = {
-                    "type": "web",
-                    "title": title,
-                    "url": url,
-                    "snippet": snippet[:500] if snippet else "",
-                    "source": source,
-                    "published_date": published_date,
-                    "favicon": favicon,
-                }
-                state.citation_counter += 1
-
-            logger.info(f"Search succeeded, got {len(results)} results")
-            return ToolOk(output=json.dumps(results, ensure_ascii=False))
-
-        except httpx.TimeoutException:
-            return ToolError(message="Search request timed out. Try again later.", brief="timeout")
-        except httpx.HTTPError as e:
-            return ToolError(message=f"Network request failed: {e}", brief="network error")
-        except Exception as e:
-            logger.exception("Web search error")
-            return ToolError(message=f"Search failed: {e}", brief="search error")
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return ""
+    try:
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            parts = [
+                "\n\n".join(b[4].replace("\n", " ").strip() for b in doc[i].get_text("blocks") if b[6] == 0)
+                for i in range(min(len(doc), 12))
+            ]
+    except Exception:
+        return ""
+    text = "\n\n".join(p.strip() for p in parts if p.strip())
+    return relevant_excerpt(text, query, EXCERPT_CHARS)

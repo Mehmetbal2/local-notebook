@@ -1,10 +1,15 @@
 import type { FileInfo } from '../../types'
 import { t } from '../../i18n'
+import {
+  AUDIO_FILE_EXTENSIONS,
+  DOCUMENT_FILE_EXTENSIONS,
+  IMAGE_FILE_EXTENSIONS,
+} from '../../constants/fileTypes'
 
-export const IMAGE_TYPES = ['jpg', 'jpeg', 'png']
-export const AUDIO_TYPES = ['wav', 'mp3', 'm4a']
-export const IMAGE_GENERATION_FILE_TYPES = [...IMAGE_TYPES, 'webp']
-export const VIDEO_GENERATION_FILE_TYPES = [...IMAGE_TYPES]
+export const IMAGE_TYPES: string[] = [...IMAGE_FILE_EXTENSIONS]
+export const AUDIO_TYPES: string[] = [...AUDIO_FILE_EXTENSIONS]
+export const IMAGE_GENERATION_FILE_TYPES: string[] = [...IMAGE_TYPES, 'webp']
+export const VIDEO_GENERATION_FILE_TYPES: string[] = [...IMAGE_TYPES]
 
 export const MAX_FILE_COUNT = 30
 
@@ -25,7 +30,7 @@ export function isAudioFile(file: FileInfo): boolean {
 function getFileSizeLimit(file: File): number {
   const ext = file.name.split('.').pop()?.toLowerCase() || ''
 
-  if (['txt', 'docx', 'pdf', 'epub'].includes(ext)) {
+  if ((DOCUMENT_FILE_EXTENSIONS as readonly string[]).includes(ext)) {
     return FILE_SIZE_LIMITS.document
   }
   if (IMAGE_TYPES.includes(ext)) {
@@ -55,13 +60,23 @@ export function checkFileSize(file: File): { valid: boolean; error?: string } {
   return { valid: true }
 }
 
+// "Author - Year - Title", the year may be a range (1408/1988) or a no-date mark (t.y. / n.d.).
+const BIBLIOGRAPHIC_NAME = /^\s*[^-–]+?\s+[-–]\s+(?:\d{3,4}(?:\s*\/\s*\d{3,4})?|t\.\s?y\.|n\.\s?d\.|无日期)\s+[-–]\s+\S.*$/i
+
+/** Whether a source's file name already reads "Author - Year - Title" (extension ignored). */
+export function isBibliographicName(fileName: string): boolean {
+  const base = fileName.replace(/\.[A-Za-z0-9]{1,6}$/, '')
+  return BIBLIOGRAPHIC_NAME.test(base)
+}
+
 export function getStatusText(status: string): string {
   const statusMap: Record<string, string> = {
     pending: t('ui.pending'),
     processing: t('ui.processing'),
     ready: t('ui.ready'),
     error: t('ui.error'),
-    failed: t('ui.parsingFailed')
+    failed: t('ui.parsingFailed'),
+    cancelled: t('ui.processingStopped')
   }
   return statusMap[status] || status
 }

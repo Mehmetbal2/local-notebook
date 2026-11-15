@@ -1,9 +1,9 @@
-"""把 while-loop agent 产出的 markdown 转成前端 FeatureBlock 列表。
+"""Convert the markdown produced by the while-loop agent into frontend FeatureBlock lists.
 
-引用拆分复用 CitationParser，使整份 workflow 的引用编号全局连续：
-调用方传入共享的 citation_map 与 start_display_num，本函数返回更新后的
-next_display_num，并把分配到的 display_num 回写进 citation_map（与 chat_agent
-的 _sync_display_nums 行为一致）。
+Citation splitting reuses CitationParser so citation numbers stay continuous across a workflow:
+the caller passes a shared citation_map and start_display_num; this function returns the updated
+next_display_num and writes the assigned display_num back into citation_map (same behaviour as
+chat_agent's _sync_display_nums).
 """
 
 import re
@@ -19,7 +19,7 @@ _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{2,}.*$")
 
 
 def _text_to_parts(parser: CitationParser, text: str) -> List[Dict[str, Any]]:
-    """把一段文本经引用解析拆成 content_parts。"""
+    """Split a piece of text into content_parts by parsing its citations."""
     parts: List[Dict[str, Any]] = []
     events = list(parser.feed(text)) + list(parser.flush())
     for ev in events:
@@ -67,7 +67,7 @@ def markdown_to_blocks(
         line = lines[i]
         stripped = line.strip()
 
-        # 代码块：原样收集为一个段落
+        # code block: collected verbatim as one paragraph
         if stripped.startswith("```"):
             if in_code:
                 in_code = False
@@ -88,13 +88,13 @@ def markdown_to_blocks(
             i += 1
             continue
 
-        # 空行：段落分隔
+        # blank line: paragraph break
         if not stripped:
             flush_para()
             i += 1
             continue
 
-        # 标题
+        # heading
         m = _HEADING_RE.match(line)
         if m:
             flush_para()
@@ -108,7 +108,7 @@ def markdown_to_blocks(
             i += 1
             continue
 
-        # 表格：连续的 | … | 行（含分隔行），存原始 markdown 到 content
+        # table: consecutive | … | rows (including the separator row); raw markdown is stored in content
         if _TABLE_ROW_RE.match(line) and i + 1 < n and _TABLE_SEP_RE.match(lines[i + 1]):
             flush_para()
             table_lines = [line]
@@ -120,12 +120,12 @@ def markdown_to_blocks(
             blocks.append({
                 "block_type": "paragraph",
                 "content": raw_table,
-                "content_parts": [{"type": "text", "content": raw_table}],
+                "content_parts": _text_to_parts(parser, raw_table),
                 "extra": {"is_table": True},
             })
             continue
 
-        # 引用
+        # blockquote
         m = _QUOTE_RE.match(line)
         if m:
             flush_para()
@@ -137,19 +137,25 @@ def markdown_to_blocks(
             i += 1
             continue
 
-        # 列表项：每项一个 list block（前端 processFeatureBlocks 会归组）
+        # list item: one list block per item (the frontend's processFeatureBlocks groups them)
         m = _LIST_RE.match(line)
         if m:
             flush_para()
             text = m.group(1).strip()
-            blocks.append({
+            list_block: Dict[str, Any] = {
                 "block_type": "list",
                 "content_parts": _text_to_parts(parser, text),
-            })
+            }
+            # Nested bullets: two spaces (or one tab) per level. Flat lists stay unchanged.
+            leading = line[: len(line) - len(line.lstrip())].replace("\t", "  ")
+            indent = min(len(leading) // 2, 6)
+            if indent > 0:
+                list_block["extra"] = {"indent": indent}
+            blocks.append(list_block)
             i += 1
             continue
 
-        # 普通段落行
+        # ordinary paragraph line
         para_buf.append(line)
         i += 1
 
@@ -162,7 +168,7 @@ def markdown_to_blocks(
                 "content_parts": [{"type": "text", "content": code_text}],
             })
 
-    # 把分配到的 display_num 回写进 citation_map，供后续栏目复用同一编号
+    # write the assigned display_num back into citation_map so later sections reuse the same numbers
     for citation_id, display_num in parser.id_to_display.items():
         entry = citation_map.get(citation_id)
         if entry is not None and entry.get("display_num") is None:

@@ -3,41 +3,48 @@ from pydantic import BaseModel
 
 
 SETTING_KEYS = {
-    "bailian_api_key",
-    "llm_source",
-    "llm_bailian_model",
     "llm_api_key",
     "llm_base_url",
     "llm_model",
     "llm_api_format",
     "easy_task_llm",
     "easy_task_llm_verified",
-    "vlm_source",
-    "vlm_bailian_model",
     "vlm_api_key",
     "vlm_base_url",
     "vlm_model",
     "embedding_source",
-    "embedding_bailian_model",
     "embedding_model",
     "embedding_api_key",
     "embedding_base_url",
-    "mineru_source",
-    "mineru_base_url",
-    "mineru_api_key",
+    "ocr_base_url",
+    "ocr_api_key",
+    "ocr_model",
+    "pdf_engine",
     "funasr_base_url",
+    "funasr_api_key",
+    "funasr_model",
     "funasr_verified",
-    "bocha_api_key",
+    "tts_base_url",
+    "tts_api_key",
+    "tts_model",
+    "tts_voice",
+    "tts_verified",
+    "searxng_base_url",
     "llm_verified",
     "vlm_verified",
     "embedding_verified",
-    "mineru_verified",
+    "ocr_verified",
     "web_search_verified",
 }
 
 
 SETTING_DEFAULTS = {
     "llm_api_format": "openai",
+    "embedding_source": "local",
+    "tts_voice": "deniz",
+    # auto: local PyMuPDF when the PDF has a text layer, the OCR service otherwise
+    "pdf_engine": "auto",
+    "searxng_base_url": "http://127.0.0.1:8888",
 }
 
 

@@ -26,7 +26,8 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { useEscapeClose } from '../../composables/useEscapeClose'
+const props = defineProps<{
   visible: boolean
   fileName: string
   previewUrl: string
@@ -39,6 +40,8 @@ const emit = defineEmits<{
 function handleClose() {
   emit('close')
 }
+
+useEscapeClose(() => props.visible, () => handleClose())
 </script>
 
 <style scoped>

@@ -91,7 +91,7 @@ function handleConfirm() {
 
 .rename-modal {
   background: var(--bg-white);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   padding: 24px;
   width: 400px;
   max-width: 90vw;
@@ -133,7 +133,7 @@ function handleConfirm() {
   padding: 10px 20px;
   background: var(--bg-hover);
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 14px;
@@ -147,7 +147,7 @@ function handleConfirm() {
 .btn-confirm {
   padding: 10px 20px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   background: var(--primary-color);
   color: white;
   cursor: pointer;

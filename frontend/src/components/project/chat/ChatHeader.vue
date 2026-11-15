@@ -107,7 +107,9 @@ function handleTitleClick() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 20px;
+  min-height: 52px;
+  padding: 10px 12px 10px 14px;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .session-title-wrapper {
@@ -170,10 +172,9 @@ function handleTitleClick() {
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: 50%;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
 }
 
 .header-action-btn:hover:not(:disabled) {

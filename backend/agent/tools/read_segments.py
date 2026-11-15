@@ -74,6 +74,13 @@ class ReadSegmentsTool(CallableTool2[ReadSegmentsParams]):
             if not seg_id:
                 errors.append({"error": f"[{cid}] is missing segment_id.", "citation_id": f"[{cid}]"})
                 continue
+            # A citation from an earlier turn may come from a source that is not selected now.
+            if state.file_ids and meta.get("file_id") not in set(state.file_ids):
+                errors.append({
+                    "error": f"[{cid}] comes from a source that is not selected for this question, so it cannot be read or cited.",
+                    "citation_id": f"[{cid}]",
+                })
+                continue
             segment_ids.append(seg_id)
 
         if not segment_ids:

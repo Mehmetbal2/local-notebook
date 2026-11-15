@@ -61,11 +61,11 @@ class GetFeatureGenerationParams(BaseModel):
 class CreateFeatureGenerationTool(CallableTool2[CreateFeatureGenerationParams]):
     name: str = "create_feature_generation"
     description: str = (
-        "Start one focused generation in the right-side panel's 'Quick tools' "
-        "(`快捷工具`) tab. "
+        "Start one focused generation in the right-side panel's quick tools "
+        "(the 'Learning' and 'Analysis' tabs). "
         "Use this for a single reusable output that should be easier to find than a chat reply, "
         "such as a positioning analysis, audience profile, summary, comparison, title ideas, "
-        "or communication copy. Do not use this for the 'Comprehensive reports' (`综合报告`) tab. "
+        "or communication copy. Do not use this for the 'Comprehensive reports' tab. "
         "It is asynchronous; after it starts, do not wait for completion."
     )
     params: type[CreateFeatureGenerationParams] = CreateFeatureGenerationParams
@@ -164,8 +164,8 @@ class GetFeatureGenerationTool(CallableTool2[GetFeatureGenerationParams]):
     name: str = "get_feature_generation"
     description: str = (
         "Get status and available content for results in the right-side panel's "
-        "'Quick tools' (`快捷工具`) tab. Use this when the user asks about a quick-tool result, not "
-        "a 'Comprehensive reports' (`综合报告`) workflow. If a quick-tool result is still "
+        "quick tools ('Learning' and 'Analysis' tabs). Use this when the user asks about a quick-tool result, not "
+        "a 'Comprehensive reports' workflow. If a quick-tool result is still "
         "pending or processing, report the current status and do not poll repeatedly."
     )
     params: type[GetFeatureGenerationParams] = GetFeatureGenerationParams

@@ -7,11 +7,17 @@ export const localeConfig = {
     relativeNow: '刚刚',
     matchesBrowserLanguage: (language: string) => language.startsWith('zh'),
   },
+  tr: {
+    htmlLang: 'tr',
+    modelOutputLanguage: 'Turkish',
+    relativeNow: 'Az önce',
+    matchesBrowserLanguage: (language: string) => language.startsWith('tr'),
+  },
   en: {
     htmlLang: 'en',
     modelOutputLanguage: 'English',
     relativeNow: 'Just now',
-    matchesBrowserLanguage: () => true,
+    matchesBrowserLanguage: (language: string) => language.startsWith('en'),
   },
 } as const
 
@@ -22,7 +28,10 @@ export const supportedLocales = Object.keys(localeConfig) as Locale[]
 
 export function normalizeLocale(value: string | null | undefined): Locale | null {
   if (!value) return null
-  if (value === 'zh') return 'zh-CN'
+  const normalized = value.toLowerCase()
+  if (normalized === 'zh' || normalized.startsWith('zh-')) return 'zh-CN'
+  if (normalized === 'tr' || normalized.startsWith('tr-')) return 'tr'
+  if (normalized === 'en' || normalized.startsWith('en-')) return 'en'
   return supportedLocales.includes(value as Locale) ? value as Locale : null
 }
 

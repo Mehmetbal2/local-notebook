@@ -2,7 +2,7 @@ import json
 import logging
 from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import UploadFile, APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from models.message import Message
 from models.session import Session
 from models.user import User
 from schemas.chat import ChatRequest, EditMessageRequest
+from utils.i18n import msg as ui_msg
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger("chat_routes")
@@ -29,6 +30,7 @@ async def _agent_sse(
     user_msg_id: Optional[str] = None,
     workflow_redis=None,
     output_language: Optional[str] = None,
+    general_chat: bool = False,
 ) -> AsyncGenerator[str, None]:
     from datetime import datetime, timezone
     from agent.chat_agent import ChatAgent
@@ -52,6 +54,7 @@ async def _agent_sse(
             enable_web_search=enable_web_search,
             workflow_redis=workflow_redis,
             output_language=output_language,
+            general_chat=general_chat,
         ):
             if event["type"] == "citations":
                 conversation_history = event.get("conversation_history") or []
@@ -104,6 +107,8 @@ async def _agent_sse(
                     tool_calls=tool_calls_json,
                     started_at=started_at,
                     finished_at=finished_at,
+                    # Marks answers given without sources so the UI can label them later too.
+                    agent_role="general" if general_chat else None,
                 )
                 db.add(assistant_msg)
                 last_assistant_msg = assistant_msg
@@ -129,13 +134,18 @@ async def _agent_sse(
         await db.commit()
 
         saved_count = len(conversation_history) + 1
-        session.citation_counter = citation_counter
-        session.next_citation_display_num = next_citation_display_num
-        session.message_count += saved_count
-        session.updated_at = finished_at
-        if last_total_tokens is not None:
-            session.last_total_tokens = last_total_tokens
-        await db.commit()
+        # The request's `session` instance is detached by the time the stream body runs
+        # (the dependency's DB session has closed), so changes to it were silently lost.
+        # Load it again in the session that is writing.
+        live_session = await db.get(type(session), session.id)
+        if live_session is not None:
+            live_session.citation_counter = max(citation_counter, live_session.citation_counter or 0)
+            live_session.next_citation_display_num = max(next_citation_display_num, live_session.next_citation_display_num or 1)
+            live_session.message_count = (live_session.message_count or 0) + saved_count
+            live_session.updated_at = finished_at
+            if last_total_tokens is not None:
+                live_session.last_total_tokens = last_total_tokens
+            await db.commit()
 
         if user_msg_id and last_assistant_id:
             yield f"data: {json.dumps({'type': 'message_ids', 'user_message_id': user_msg_id, 'assistant_message_id': last_assistant_id}, ensure_ascii=False)}\n\n"
@@ -158,16 +168,18 @@ async def chat_stream(
         session_id=body.session_id,
         role="user",
         content=body.message,
-        used_file_ids=_json.dumps(body.file_ids) if body.file_ids else None,
+        used_file_ids="[]" if body.general_chat else (_json.dumps(body.file_ids) if body.file_ids else None),
     )
     db.add(user_msg)
     await db.commit()
 
     return StreamingResponse(
-        _agent_sse(session, current_user.id, body.message, body.file_ids, db, body.enable_web_search,
+        _agent_sse(session, current_user.id, body.message, [] if body.general_chat else body.file_ids, db,
+                   body.enable_web_search,
                    user_msg_id=user_msg.id,
                    workflow_redis=request.app.state.redis,
-                   output_language=body.output_language),
+                   output_language=body.output_language,
+                   general_chat=body.general_chat),
         media_type="text/event-stream",
         headers={
             "Cache-Control":     "no-cache",
@@ -189,11 +201,11 @@ async def edit_message_and_regenerate(
 
     original_msg = await db.get(Message, message_id)
     if not original_msg:
-        raise HTTPException(status_code=404, detail="消息不存在")
+        raise HTTPException(status_code=404, detail=ui_msg("message_not_found"))
     if original_msg.session_id != session_id:
-        raise HTTPException(status_code=400, detail="消息不属于此会话")
+        raise HTTPException(status_code=400, detail=ui_msg("message_not_in_session"))
     if original_msg.role != "user":
-        raise HTTPException(status_code=400, detail="只能编辑用户消息")
+        raise HTTPException(status_code=400, detail=ui_msg("only_user_messages_editable"))
 
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
@@ -206,31 +218,32 @@ async def edit_message_and_regenerate(
         .values(deleted_at=now)
     )
     await db.commit()
-    logger.info(f"[edit_message] 软删除了 message_id={message_id} 及之后的消息")
+    logger.info(f"[edit_message] soft-deleted message_id={message_id} and the messages after it")
 
     import json as _json
     new_user_msg = Message(
         session_id=session_id,
         role="user",
         content=body.content,
-        used_file_ids=_json.dumps(body.file_ids) if body.file_ids else None,
+        used_file_ids="[]" if body.general_chat else (_json.dumps(body.file_ids) if body.file_ids else None),
         parent_message_id=message_id,
     )
     db.add(new_user_msg)
 
     if session.compact_trigger_message_id == message_id:
         session.compact_trigger_message_id = new_user_msg.id
-        logger.info(f"[edit_message] 更新 compact_trigger_message_id: {message_id} -> {new_user_msg.id}")
+        logger.info(f"[edit_message] updated compact_trigger_message_id: {message_id} -> {new_user_msg.id}")
 
     await db.commit()
 
     return StreamingResponse(
         _agent_sse(
-            session, current_user.id, body.content, body.file_ids or [], db,
+            session, current_user.id, body.content, [] if body.general_chat else (body.file_ids or []), db,
             enable_web_search=body.enable_web_search,
             user_msg_id=new_user_msg.id,
             workflow_redis=request.app.state.redis,
             output_language=body.output_language,
+            general_chat=body.general_chat,
         ),
         media_type="text/event-stream",
         headers={
@@ -238,3 +251,46 @@ async def edit_message_and_regenerate(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+DICTATION_MAX_BYTES = 25 * 1024 * 1024
+
+
+@router.post("/transcribe")
+async def transcribe_dictation(
+    file: UploadFile,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Speech to text for the chat box, with the speech-to-text service set in Settings."""
+    import os
+    import tempfile
+
+    import config
+    from services.funasr_client import FunASRClient
+
+    enabled, base_url, model, api_key = await config.resolve_funasr_config()
+    if not enabled:
+        raise HTTPException(status_code=503, detail=ui_msg("asr_not_configured_dictation"))
+
+    data = await file.read(DICTATION_MAX_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail=ui_msg("dictation_empty"))
+    if len(data) > DICTATION_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=ui_msg("dictation_too_long"))
+
+    suffix = os.path.splitext(file.filename or "")[1] or ".wav"
+    fd, path = tempfile.mkstemp(prefix="dictation_", suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        result = await FunASRClient(base_url=base_url, api_key=api_key, model=model).transcribe(path)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    if not result.success:
+        raise HTTPException(status_code=502, detail=result.error_message or ui_msg("asr_failed"))
+    return {"text": (result.full_text or "").strip()}
+

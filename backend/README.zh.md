@@ -10,7 +10,7 @@ FastAPI 主服务:对外提供 REST + SSE 接口,内置 ARQ 后台 worker 处理
 |---|---|
 | [routes/](./routes) | API 路由层:`auth` / `project` / `file` / `session` / `chat` / `settings` |
 | [agent/](./agent) | 对话核心:`chat_agent`(主 Agent)、`citation_parser`(Block 级引用解析)、`prompts`、`tools/`(Agent 可调用工具) |
-| [services/](./services) | 业务服务:`embedding_service` / `vector_service`(连 standalone Milvus)/ `mineru_client`(PDF)/ `segment_service`(切块)/ `summary_service` / `vlm_client` / `export_service` |
+| [services/](./services) | 业务服务:`embedding_service` / `vector_service`(连 standalone Milvus)/ `ocr_client`(扫描版 PDF)/ `segment_service`(切块)/ `summary_service` / `vlm_client` / `export_service` |
 | [models/](./models) | SQLAlchemy ORM:`project` / `file` / `segment` / `block` / `session` / `message` / `image` / `settings` |
 | [workers/](./workers) | ARQ 后台任务:文件上传后异步解析、切块、向量化 |
 | [packages/kosong/](./packages/kosong) | 内置 Agent 推理框架(LLM provider / tool calling / streaming) |
@@ -84,5 +84,5 @@ curl http://localhost:8000/health/redis
 ## 数据流
 
 1. **文件上传** → `routes/file_routes.py` 写入 `UPLOAD_DIR` → 投递到 ARQ
-2. **后台解析** → `workers/parsers/` 调用 MinerU(PDF)/ FunASR(音频)→ 切块 (`segment_service`) → 向量化 (`embedding_service`) → 写入共享 Milvus collection (`vector_service`)
+2. **后台解析** → `workers/parsers/` 用 PyMuPDF 本地解析 PDF 或调用 OCR 服务 / FunASR(音频)→ 切块 (`segment_service`) → 向量化 (`embedding_service`) → 写入共享 Milvus collection (`vector_service`)
 3. **对话** → `routes/chat_routes.py` (SSE) → `agent/chat_agent.py` 推理 → `agent/citation_parser.py` 解析引用 → 流式返回到前端

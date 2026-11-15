@@ -11,6 +11,7 @@ from dependencies.auth import (
 )
 from dependencies.database import get_db
 from models.user import User
+from utils.time import utc_isoformat
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -23,7 +24,7 @@ async def get_me(current_user: User = Depends(get_current_user)) -> dict:
             "user_id": current_user.id,
             "username": current_user.username,
             "role": current_user.role,
-            "created_at": current_user.created_at.isoformat(),
+            "created_at": utc_isoformat(current_user.created_at),
         },
         "username": current_user.username,
         "user_id": current_user.id,
@@ -67,7 +68,7 @@ async def login(
             "user_id": user.id,
             "username": user.username,
             "role": user.role,
-            "created_at": user.created_at.isoformat(),
+            "created_at": utc_isoformat(user.created_at),
         },
     }
 

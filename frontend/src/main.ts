@@ -2,9 +2,29 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
 import { i18n } from './i18n'
+import { vKeyActivate } from './directives/keyActivate'
+import { installUiLanguageFetch } from './services/uiLanguageHeader'
 import './assets/main.css'
 
+// Favicons in web citations come from arbitrary sites; when one fails to load,
+// swap in the generic globe icon that is rendered right after it.
+document.addEventListener(
+  'error',
+  (event) => {
+    const target = event.target
+    if (target instanceof HTMLImageElement && target.classList.contains('web-favicon')) {
+      target.style.display = 'none'
+      const fallback = target.nextElementSibling
+      if (fallback instanceof SVGElement) fallback.style.display = 'inline'
+    }
+  },
+  true,
+)
+
+installUiLanguageFetch()
+
 const app = createApp(App)
+app.directive('key-activate', vKeyActivate)
 app.use(i18n)
 app.use(router)
 app.mount('#app')

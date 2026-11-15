@@ -83,6 +83,7 @@
 </template>
 
 <script setup lang="ts">
+import { useEscapeClose } from '../../composables/useEscapeClose'
 import { computed, ref, watch } from 'vue'
 import { t } from '../../i18n'
 
@@ -176,6 +177,8 @@ function handleCancel() {
   emit('cancel')
   emit('update:visible', false)
 }
+
+useEscapeClose(() => props.visible, () => handleCancel())
 </script>
 
 <style scoped>
@@ -199,7 +202,7 @@ function handleCancel() {
   height: 515px;
   max-height: 92vh;
   background: var(--bg-white);
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
   display: flex;
   flex-direction: column;
@@ -358,7 +361,7 @@ function handleCancel() {
 }
 
 .file-icon.document {
-  color: #1a73e8;
+  color: var(--primary-color);
 }
 
 .file-name {
@@ -445,7 +448,7 @@ function handleCancel() {
 
 .feature-config-btn {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-full);
   padding: 10px 24px;
   font-size: 14px;
   font-weight: 500;

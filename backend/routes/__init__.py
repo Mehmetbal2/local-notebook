@@ -8,6 +8,8 @@ from routes.session_routes import router as session_router
 from routes.chat_routes import router as chat_router
 from routes.settings_routes import router as settings_router
 from routes.workflow_routes import router as workflow_router
+from routes.web_source_routes import router as web_source_router
+from routes.search_routes import router as search_router
 
 __all__ = [
     "auth_router",
@@ -20,4 +22,6 @@ __all__ = [
     "chat_router",
     "settings_router",
     "workflow_router",
+    "web_source_router",
+    "search_router",
 ]

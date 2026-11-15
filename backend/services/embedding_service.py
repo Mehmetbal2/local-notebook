@@ -5,6 +5,7 @@ from typing import Awaitable, Callable
 import httpx
 
 import config
+from utils.arabic_text import normalize_arabic_for_embedding
 
 logger = logging.getLogger("embedding_service")
 
@@ -17,8 +18,8 @@ async def _get_config() -> tuple[str, str, str, str]:
             "Embedding base URL is not configured. Set base_url in Settings > Embedding. "
             "Docker deployments cannot use localhost; see the Settings hint."
         )
-    # API 模式(bailian/custom)必须有显式 model;
-    # local 模式 model 字段由本地服务忽略(用其启动时 MODEL env),空串透传即可。
+    # API mode (custom) needs an explicit model;
+    # in local mode the service ignores the model field (it uses its MODEL env at startup), so an empty string is passed through.
     if mode == "api" and not model:
         raise RuntimeError(
             "Embedding model is not configured. Select a model in Settings > Embedding."
@@ -41,10 +42,13 @@ async def embed_texts(
 
     mode, base_url, model, api_key = await _get_config()
 
-    is_dashscope = "dashscope" in base_url
     batch_size = EMBED_BATCH_SIZE
 
-    url = f"{base_url}/embeddings"
+    clean_base = base_url.rstrip("/")
+    if clean_base.endswith("/embeddings"):
+        url = clean_base
+    else:
+        url = f"{clean_base}/embeddings"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -55,11 +59,12 @@ async def embed_texts(
     all_results: list[list[float]] = [[] for _ in texts]
 
     for batch_start in range(0, len(texts), batch_size):
-        batch = texts[batch_start:batch_start + batch_size]
+        batch = [
+            normalize_arabic_for_embedding(text)
+            for text in texts[batch_start:batch_start + batch_size]
+        ]
 
         payload: dict = {"model": model, "input": batch}
-        if is_dashscope and "embedding" in model:
-            payload["dimensions"] = 512
 
         try:
             async with httpx.AsyncClient(timeout=120) as client:

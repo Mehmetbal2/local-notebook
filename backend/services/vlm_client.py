@@ -8,20 +8,12 @@ import config
 
 logger = logging.getLogger(__name__)
 
-BAILIAN_VLM_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-
 
 async def resolve_vlm_config() -> tuple[str, str, str]:
-    source = await config.get_setting("vlm_source", "")
-    if source == "custom":
-        api_key = await config.get_setting("vlm_api_key", "")
-        base_url = await config.get_setting("vlm_base_url", "")
-        model = await config.get_setting("vlm_model", "")
-        return api_key or "", base_url or "", model or ""
-    api_key = await config.get_setting("bailian_api_key", "")
-    base_url = BAILIAN_VLM_URL
-    model = await config.get_setting("vlm_bailian_model", "")
-    return api_key or "", base_url, model or ""
+    api_key = await config.get_setting("vlm_api_key", "")
+    base_url = await config.get_setting("vlm_base_url", "")
+    model = await config.get_setting("vlm_model", "")
+    return api_key or "", base_url or "", model or ""
 
 
 def encode_image_to_base64(image_path: str) -> str:
@@ -92,9 +84,13 @@ async def describe_image(
         "max_tokens": 1000,
     }
 
+    target_url = base_url.strip().rstrip("/")
+    if not target_url.endswith("/chat/completions"):
+        target_url = f"{target_url}/chat/completions"
+
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
-            response = await client.post(base_url, headers=headers, json=payload)
+            response = await client.post(target_url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
 

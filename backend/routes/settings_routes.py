@@ -18,6 +18,7 @@ from kosong.message import Message
 from models.user import User
 from services.llm_provider import create_llm_chat_provider, normalize_llm_api_format
 from services.usage_service import record_model_usage
+from utils.i18n import msg as ui_msg
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -67,9 +68,7 @@ async def update_settings(
             if file_count > 0:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"当前有 {file_count} 个已解析的文档，"
-                           "切换 Embedding 服务后这些文档的向量数据将全部失效，"
-                           "需要删除项目并重新上传。",
+                    detail=ui_msg("embedding_switch_blocked", count=file_count),
                 )
 
     await config.set_many(filtered, db)
@@ -81,43 +80,31 @@ async def update_settings(
 async def preflight_check(
     _: str = Depends(get_current_user),
 ) -> dict:
-    # 直接检查用户的"原始设置",不依赖 resolve_*_config 的默认值兜底,
-    # 否则会出现"用户没选模型,但 fallback 给了默认值,误报为已配置"的情况。
-    llm_source = await config.get_setting("llm_source", "")
-    if llm_source == "custom":
-        llm_ready = bool(
-            (await config.get_setting("llm_api_key", ""))
-            and (await config.get_setting("llm_base_url", ""))
-            and (await config.get_setting("llm_model", ""))
-        )
-    else:  # 默认走 bailian
-        llm_ready = bool(
-            (await config.get_setting("bailian_api_key", ""))
-            and (await config.get_setting("llm_bailian_model", ""))
-        )
+    # Check the user's raw settings directly instead of the resolve_*_config fallbacks;
+    # otherwise a default model would make an unconfigured service look configured.
+    llm_ready = bool(
+        (await config.get_setting("llm_api_key", ""))
+        and (await config.get_setting("llm_base_url", ""))
+        and (await config.get_setting("llm_model", ""))
+    )
 
-    emb_source = await config.get_setting("embedding_source", "bailian")
-    if emb_source == "local":
-        embedding_ready = bool(await config.get_setting("embedding_base_url", ""))
-    elif emb_source == "custom":
+    emb_source = await config.get_setting("embedding_source", "local")
+    if emb_source == "custom":
         embedding_ready = bool(
             (await config.get_setting("embedding_api_key", ""))
             and (await config.get_setting("embedding_base_url", ""))
             and (await config.get_setting("embedding_model", ""))
         )
-    else:  # bailian
-        embedding_ready = bool(
-            (await config.get_setting("bailian_api_key", ""))
-            and (await config.get_setting("embedding_bailian_model", ""))
-        )
+    else:  # local
+        embedding_ready = bool(await config.get_setting("embedding_base_url", ""))
 
     missing = []
     if not llm_ready:
-        missing.append("LLM 大语言模型")
+        missing.append(ui_msg("preflight_llm"))
     if not embedding_ready:
-        missing.append("Embedding 向量模型")
+        missing.append(ui_msg("preflight_embedding"))
 
-    web_search_ready, _, _ = await config.resolve_web_search_config()
+    web_search_ready, _ = await config.resolve_web_search_config()
 
     return {
         "ready": llm_ready and embedding_ready,
@@ -157,8 +144,7 @@ async def delete_setting(
 
 
 class ChatModelTestRequest(BaseModel):
-    # source 字段让前端能在"radio 已切换但还没保存"时测试正确的配置源,
-    # 否则后端会按 DB 里旧的 source resolve,得到自定义的 key + 百炼的 model 这种错乱组合。
+    # the source field is kept for compatibility with external callers
     source: str | None = None
     api_key: str | None = None
     base_url: str | None = None
@@ -167,7 +153,7 @@ class ChatModelTestRequest(BaseModel):
 
 
 class EmbeddingTestRequest(BaseModel):
-    # source 同 ChatModelTestRequest 的设计:让前端 radio 切换后无需先保存就能正确测试
+    # source works like ChatModelTestRequest: the frontend can test after switching the radio without saving first
     source: str | None = None
     mode: str = "local"
     model: str | None = None
@@ -187,16 +173,18 @@ async def _test_chat_completions(
     payload = {"model": model, "messages": payload_messages, "max_tokens": 1}
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
+        clean_base = base_url.rstrip("/")
+        target_url = clean_base if clean_base.endswith("/chat/completions") else f"{clean_base}/chat/completions"
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(f"{base_url.rstrip('/')}/chat/completions", json=payload, headers=headers)
+            resp = await client.post(target_url, json=payload, headers=headers)
         if resp.status_code in (200, 201):
             await _mark_verified(verified_key, True, db)
-            return {"ok": True, "msg": "连接成功", "verified": True}
+            return {"ok": True, "msg": ui_msg("conn_ok"), "verified": True}
         await _mark_verified(verified_key, False, db)
-        return {"ok": False, "msg": f"服务返回 {resp.status_code}"}
+        return {"ok": False, "msg": ui_msg("service_returned", status=resp.status_code)}
     except httpx.ConnectError:
         await _mark_verified(verified_key, False, db)
-        return {"ok": False, "msg": "无法连接到服务地址"}
+        return {"ok": False, "msg": ui_msg("cannot_connect")}
     except Exception as exc:
         await _mark_verified(verified_key, False, db)
         return {"ok": False, "msg": str(exc)}
@@ -228,7 +216,7 @@ async def _test_llm_provider(
         )
         await record_model_usage(user_id=user_id, model=model, usage=result.usage)
         await _mark_verified(verified_key, True, db)
-        return {"ok": True, "msg": "连接成功", "verified": True}
+        return {"ok": True, "msg": ui_msg("conn_ok"), "verified": True}
     except ChatProviderError as exc:
         await _mark_verified(verified_key, False, db)
         return {"ok": False, "msg": str(exc)}
@@ -256,28 +244,9 @@ async def _resolve_test_config(
     body: ChatModelTestRequest,
     kind: str,  # "llm" | "vlm"
 ) -> tuple[str | None, str | None, str | None, str]:
-    """按 body.source 独立计算 api_key/base_url/model,不依赖 DB 里已保存的 source,
-    让用户在切了 radio 但还没点保存时也能用新配置做测试。"""
-    if body.source == "bailian":
-        api_key = body.api_key or await config.get_setting("bailian_api_key", "")
-        base_url = config.BAILIAN_BASE_URL
-        model = body.model
-        return api_key, base_url, model, "openai"
-    if body.source == "custom":
-        api_format = normalize_llm_api_format(body.api_format) if kind == "llm" else "openai"
-        return body.api_key, body.base_url, body.model, api_format
-    # source 未指定 — 兼容老调用方,按 DB 当前状态解析
-    if kind == "vlm":
-        default_key, default_url, default_model = await config.resolve_vlm_config()
-        default_format = "openai"
-    else:
-        default_key, default_url, default_model, default_format = await config.resolve_llm_provider_config()
-    return (
-        body.api_key or default_key,
-        body.base_url or default_url,
-        body.model or default_model,
-        normalize_llm_api_format(body.api_format or default_format),
-    )
+    """Resolve api_key/base_url/model/api_format directly from test request."""
+    api_format = normalize_llm_api_format(body.api_format) if kind == "llm" else "openai"
+    return body.api_key, body.base_url, body.model, api_format
 
 
 @router.post("/test/llm")
@@ -336,53 +305,45 @@ async def test_vlm(
     )
 
 
-class MinerUTestRequest(BaseModel):
-    source: str | None = None
-    base_url: str | None = None
+class OCRTestRequest(BaseModel):
     api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
 
 
-@router.post("/test/mineru")
-async def test_mineru(
-    body: MinerUTestRequest,
+@router.post("/test/ocr")
+async def test_ocr(
+    body: OCRTestRequest,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_admin),
 ) -> dict:
-    from services.mineru_client import health_check
+    from services.ocr_client import health_check
 
-    enabled, default_source, default_url, default_key = await config.resolve_mineru_config()
-    source = body.source or default_source or "local"
+    _, default_url, default_model, default_key = await config.resolve_ocr_config()
+    api_key = (body.api_key if body.api_key is not None else (default_key or "")).strip()
+    base_url = (body.base_url if body.base_url is not None else (default_url or "")).strip().rstrip("/")
+    model = (body.model if body.model is not None else (default_model or "")).strip()
 
-    if source == "api":
-        api_key = body.api_key or default_key
-        if not api_key:
-            return {"ok": False, "msg": "未配置 API Key"}
-        try:
-            result = await health_check(api_key=api_key, source="api")
-            await _mark_verified("mineru_verified", result["ok"], db)
-            if result["ok"]:
-                return {"ok": True, "msg": result["msg"], "verified": True}
-            return {"ok": False, "msg": result["msg"]}
-        except Exception as exc:
-            await _mark_verified("mineru_verified", False, db)
-            return {"ok": False, "msg": str(exc)}
-    else:
-        base_url = body.base_url or default_url
-        if not base_url:
-            return {"ok": False, "msg": "未配置服务地址"}
-        try:
-            result = await health_check(base_url=base_url, source="local")
-            await _mark_verified("mineru_verified", result["ok"], db)
-            if result["ok"]:
-                return {"ok": True, "msg": f"MinerU 服务连接成功 ({base_url})", "verified": True}
-            return {"ok": False, "msg": f"无法连接到 {base_url}"}
-        except Exception as exc:
-            await _mark_verified("mineru_verified", False, db)
-            return {"ok": False, "msg": str(exc)}
+    if not api_key:
+        return {"ok": False, "msg": ui_msg("missing_api_key")}
+    if not base_url:
+        return {"ok": False, "msg": ui_msg("missing_base_url")}
+    if not model:
+        return {"ok": False, "msg": ui_msg("missing_model")}
+
+    try:
+        result = await health_check(base_url=base_url, api_key=api_key, model=model)
+        await _mark_verified("ocr_verified", bool(result.get("ok")), db)
+        return result
+    except Exception as exc:
+        await _mark_verified("ocr_verified", False, db)
+        return {"ok": False, "msg": str(exc)}
 
 
 class FunASRTestRequest(BaseModel):
+    api_key: str | None = None
     base_url: str | None = None
+    model: str | None = None
 
 
 @router.post("/test/funasr")
@@ -393,15 +354,62 @@ async def test_funasr(
 ) -> dict:
     from services.funasr_client import FunASRClient
 
-    _, default_url = await config.resolve_funasr_config()
-    base_url = (body.base_url or default_url or "").strip().rstrip("/")
-    if not base_url:
-        return {"ok": False, "msg": "未配置服务地址"}
+    _, default_url, default_model, default_key = await config.resolve_funasr_config()
+    api_key = (body.api_key if body.api_key is not None else (default_key or "")).strip()
+    base_url = (body.base_url if body.base_url is not None else (default_url or "")).strip().rstrip("/")
+    model = (body.model if body.model is not None else (default_model or "")).strip()
 
-    ok, msg = await FunASRClient(base_url).health_check()
+    if not api_key:
+        return {"ok": False, "msg": ui_msg("missing_api_key")}
+    if not base_url:
+        return {"ok": False, "msg": ui_msg("missing_base_url")}
+    if not model:
+        return {"ok": False, "msg": ui_msg("missing_model")}
+
+    ok, msg = await FunASRClient(base_url=base_url, api_key=api_key, model=model).health_check()
     await _mark_verified("funasr_verified", ok, db)
     if ok:
-        return {"ok": True, "msg": f"{msg} ({base_url})", "verified": True}
+        return {"ok": True, "msg": msg, "verified": True}
+    return {"ok": False, "msg": msg}
+
+
+class TTSTestRequest(BaseModel):
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    voice: str | None = None
+
+
+@router.post("/test/tts")
+async def test_tts(
+    body: TTSTestRequest,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_admin),
+) -> dict:
+    from services.tts_client import TTSClient
+
+    _, default_url, default_model, default_key, default_voice = await config.resolve_tts_config()
+    api_key = (body.api_key if body.api_key is not None else (default_key or "")).strip()
+    base_url = (body.base_url if body.base_url is not None else (default_url or "")).strip().rstrip("/")
+    model = (body.model if body.model is not None else (default_model or "")).strip()
+    voice = (body.voice if body.voice is not None else (default_voice or "deniz")).strip() or "deniz"
+
+    if not api_key:
+        return {"ok": False, "msg": "API anahtarı yapılandırılmadı"}
+    if not base_url:
+        return {"ok": False, "msg": "Base URL yapılandırılmadı"}
+    if not model:
+        return {"ok": False, "msg": "Model adı yapılandırılmadı"}
+
+    ok, msg = await TTSClient.health_check(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        voice=voice,
+    )
+    await _mark_verified("tts_verified", ok, db)
+    if ok:
+        return {"ok": True, "msg": msg, "verified": True}
     return {"ok": False, "msg": msg}
 
 
@@ -411,12 +419,8 @@ async def test_embedding(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_admin),
 ) -> dict:
-    # 按 body.source 独立解析,避免依赖 DB 里旧的 embedding_source。
-    if body.source == "bailian":
-        api_key = body.api_key or await config.get_setting("bailian_api_key", "")
-        base_url = config.BAILIAN_BASE_URL
-        model = body.model or await config.get_setting("embedding_bailian_model", "")
-    elif body.source == "local":
+    # resolve from body.source so an old embedding_source in the DB is not used
+    if body.source == "local":
         base_url = body.base_url or ""
         model = body.model or ""
         api_key = "local"
@@ -425,18 +429,16 @@ async def test_embedding(
         base_url = body.base_url or ""
         model = body.model or ""
     else:
-        # 兼容老调用方
+        # compatibility with old callers
         _, default_url, default_model, default_key = await config.resolve_embedding_config()
         base_url = body.base_url or default_url
         model = body.model or default_model
         api_key = body.api_key or default_key
 
     if not base_url:
-        return {"ok": False, "msg": "未配置服务地址"}
+        return {"ok": False, "msg": ui_msg("missing_service_url")}
 
-    payload: dict = {"model": model, "input": ["测试文本"]}
-    if "embedding" in (model or "") and "dashscope" in (base_url or ""):
-        payload["dimensions"] = 512
+    payload: dict = {"model": model, "input": ["test text"]}
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -444,25 +446,27 @@ async def test_embedding(
     }
 
     try:
+        clean_base = base_url.rstrip("/")
+        target_url = clean_base if clean_base.endswith("/embeddings") else f"{clean_base}/embeddings"
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(f"{base_url.rstrip('/')}/embeddings", json=payload, headers=headers)
+            resp = await client.post(target_url, json=payload, headers=headers)
         if resp.status_code in (200, 201):
             data = resp.json()
             dim = len(data.get("data", [{}])[0].get("embedding", []))
             await _mark_verified("embedding_verified", True, db)
-            return {"ok": True, "msg": f"连接成功 · {model} · 维度 {dim}", "verified": True}
+            return {"ok": True, "msg": ui_msg("conn_ok_embedding", model=model, dim=dim), "verified": True}
         await _mark_verified("embedding_verified", False, db)
-        return {"ok": False, "msg": f"服务返回 {resp.status_code}: {resp.text[:200]}"}
+        return {"ok": False, "msg": ui_msg("service_returned", status=f"{resp.status_code}: {resp.text[:200]}")}
     except httpx.ConnectError:
         await _mark_verified("embedding_verified", False, db)
-        return {"ok": False, "msg": f"无法连接到 {base_url}"}
+        return {"ok": False, "msg": ui_msg("cannot_connect_url", url=base_url)}
     except Exception as exc:
         await _mark_verified("embedding_verified", False, db)
         return {"ok": False, "msg": str(exc)}
 
 
 class WebSearchTestRequest(BaseModel):
-    api_key: str | None = None
+    base_url: str | None = None
 
 
 @router.post("/test/web-search")
@@ -471,39 +475,35 @@ async def test_web_search(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_admin),
 ) -> dict:
-    enabled, default_key, base_url = await config.resolve_web_search_config()
+    base_url = (body.base_url or "").strip().rstrip("/") or await config.resolve_searxng_url()
+    return await _test_searxng(base_url, db)
 
-    api_key = body.api_key or default_key
 
-    if not api_key:
-        return {"ok": False, "msg": "未配置 API Key"}
+async def _test_searxng(base_url: str, db: AsyncSession) -> dict:
+    from services import searxng_client as sx
 
+    if not base_url.startswith(("http://", "https://")):
+        return {"ok": False, "msg": ui_msg("missing_base_url")}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{base_url.rstrip('/')}/web-search",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "query": "test",
-                    "count": 1,
-                    "freshness": "noLimit",
-                    "summary": True
-                }
-            )
-        if resp.status_code in (200, 201):
-            await _mark_verified("web_search_verified", True, db)
-            return {"ok": True, "msg": "博查 API 连接成功", "verified": True}
-        if resp.status_code == 401:
-            await _mark_verified("web_search_verified", False, db)
-            return {"ok": False, "msg": "API Key 无效，请检查密钥"}
+        results = await sx.search(base_url, "test", timeout=20)
+    except sx.SearxngError as exc:
         await _mark_verified("web_search_verified", False, db)
-        return {"ok": False, "msg": f"服务返回 {resp.status_code}"}
-    except httpx.ConnectError:
+        if exc.code == "unreachable":
+            return {"ok": False, "msg": ui_msg("searxng_cannot_connect", url=base_url)}
+        if exc.code == "json_disabled":
+            return {"ok": False, "msg": ui_msg("searxng_json_disabled")}
+        if exc.code == "rate_limited":
+            return {"ok": False, "msg": ui_msg("searxng_rate_limited")}
+        if exc.code == "timeout":
+            return {"ok": False, "msg": ui_msg("conn_timeout_url", url=base_url)}
+        return {"ok": False, "msg": ui_msg("service_returned", status=exc.status or str(exc))}
+    engines = sorted({e for r in results for e in r.engines})
+    if not results:
         await _mark_verified("web_search_verified", False, db)
-        return {"ok": False, "msg": "无法连接到博查服务"}
-    except Exception as exc:
-        await _mark_verified("web_search_verified", False, db)
-        return {"ok": False, "msg": str(exc)}
+        return {"ok": False, "msg": ui_msg("searxng_no_results")}
+    await _mark_verified("web_search_verified", True, db)
+    return {
+        "ok": True,
+        "msg": ui_msg("searxng_ok", count=len(results), engines=", ".join(engines[:6]) or "-"),
+        "verified": True,
+    }

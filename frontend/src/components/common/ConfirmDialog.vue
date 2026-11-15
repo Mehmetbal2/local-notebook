@@ -33,7 +33,8 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { useEscapeClose } from '../../composables/useEscapeClose'
+const props = defineProps<{
   visible: boolean
   title: string
   message: string
@@ -57,6 +58,8 @@ function handleCancel() {
   emit('cancel')
   emit('update:visible', false)
 }
+
+useEscapeClose(() => props.visible, () => handleCancel())
 </script>
 
 <style scoped>
@@ -76,7 +79,7 @@ function handleCancel() {
 
 .confirm-dialog {
   background: white;
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   padding: 24px;
   width: 380px;
   max-width: 90vw;
@@ -108,8 +111,8 @@ function handleCancel() {
 }
 
 .confirm-icon.danger {
-  background: #ffebee;
-  color: #f44336;
+  background: var(--error-soft);
+  color: var(--error-color);
 }
 
 .confirm-content {
@@ -119,13 +122,13 @@ function handleCancel() {
 .confirm-title {
   font-size: 18px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--text-primary);
   margin: 0 0 8px 0;
 }
 
 .confirm-message {
   font-size: 14px;
-  color: #6b7280;
+  color: var(--text-tertiary);
   margin: 0;
   line-height: 1.5;
   white-space: pre-line;
@@ -140,7 +143,7 @@ function handleCancel() {
 .confirm-btn {
   flex: 1;
   padding: 12px 20px;
-  border-radius: 10px;
+  border-radius: var(--radius-full);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -149,21 +152,21 @@ function handleCancel() {
 }
 
 .confirm-btn.cancel {
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .confirm-btn.cancel:hover {
-  background: #e5e7eb;
+  background: var(--border-color);
 }
 
 .confirm-btn.confirm {
-  background: #3b82f6;
+  background: var(--primary-color);
   color: white;
 }
 
 .confirm-btn.confirm:hover {
-  background: #2563eb;
+  background: var(--primary-color);
 }
 
 .confirm-btn.confirm.warning {
@@ -175,7 +178,7 @@ function handleCancel() {
 }
 
 .confirm-btn.confirm.danger {
-  background: #f44336;
+  background: var(--error-color);
 }
 
 .confirm-btn.confirm.danger:hover {

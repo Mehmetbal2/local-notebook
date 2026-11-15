@@ -304,18 +304,26 @@ export function useSourcePreview({
         try {
           const fileInfo = await getFile(fileId)
 
-          let pageInfo = pageInfoCache.value.get(fileId)
-          if (!pageInfo) {
-            pageInfo = await getFilePageInfo(fileId)
-            pageInfoCache.value.set(fileId, pageInfo)
-          }
+          if (file.file_type === 'pdf') {
+            let pageInfo = pageInfoCache.value.get(fileId)
+            if (!pageInfo) {
+              pageInfo = await getFilePageInfo(fileId)
+              pageInfoCache.value.set(fileId, pageInfo)
+            }
 
-          if (pageInfo.has_pages && file.file_type === 'pdf') {
-            isPdfFile.value = true
-            supportsRawView.value = fileInfo.supports_raw_view ?? true
-            pdfPageInfo.value = pageInfo
-
-            viewMode.value = 'raw'
+            if (pageInfo.has_pages) {
+              isPdfFile.value = true
+              supportsRawView.value = fileInfo.supports_raw_view ?? true
+              pdfPageInfo.value = pageInfo
+              viewMode.value = 'raw'
+            } else {
+              const content = await loadFileContent(fileId)
+              if (!content) {
+                isLoadingContent.value = false
+                return
+              }
+              previewingFileContent.value = content
+            }
           } else {
             const content = await loadFileContent(fileId)
             if (!content) {
@@ -325,7 +333,7 @@ export function useSourcePreview({
             previewingFileContent.value = content
           }
         } catch (error) {
-          console.error('[Preview] Failed to get page info:', error)
+          console.error('[Preview] Failed to load preview:', error)
 
           const content = await loadFileContent(fileId)
           if (content) {

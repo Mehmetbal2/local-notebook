@@ -1,5 +1,7 @@
 import asyncio
+import json
 import os
+import unicodedata
 from pathlib import Path
 
 import aiofiles
@@ -15,11 +17,15 @@ from dependencies.permissions import require_file, require_project
 from models.file import File
 from models.project import Project
 from models.user import User
+from paths import get_upload_dir, resolve_stored_path, to_portable_path
 from schemas.file import FileResponse
+from utils.text_decoding import looks_like_binary
+from utils.i18n import msg as ui_msg
 
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads"))
+UPLOAD_DIR = get_upload_dir()
 UPLOAD_CHUNK_SIZE = 1024 * 1024
-DOCUMENT_EXTENSIONS = {"pdf", "docx", "doc", "txt", "epub"}
+DOCUMENT_EXTENSIONS = {"pdf", "docx", "doc", "txt", "md", "markdown", "htm", "html", "epub"}
+TEXT_EXTENSIONS = {"txt", "md", "markdown", "htm", "html"}
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png"}
 AUDIO_EXTENSIONS = {"wav", "mp3", "m4a"}
 ALLOWED_EXTENSIONS = {
@@ -33,6 +39,8 @@ router = APIRouter(prefix="/projects/{project_id}/files", tags=["files"])
 
 def _file_type(filename: str) -> str:
     ext = Path(filename).suffix.lower().lstrip(".")
+    aliases = {"htm": "html", "markdown": "md"}
+    ext = aliases.get(ext, ext)
     if ext in DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS:
         return ext
     return "unknown"
@@ -78,13 +86,58 @@ async def _get_file_or_404(
     return await require_file(db, file_id, current_user, project_id)
 
 
-async def _delete_file(db: AsyncSession, db_file: File) -> None:
+def _resolve_db_file_path(db_file: File) -> Path:
+    return Path(
+        resolve_stored_path(
+            db_file.file_path,
+            project_id=db_file.project_id,
+            file_name=db_file.file_name,
+        )
+    )
+
+
+ACTIVE_FILE_STATUSES = {"pending", "processing"}
+STOPPABLE_TO_RETRY_STATUSES = {"cancelled", "failed"}
+MAX_BATCH_FILES = 200
+
+
+def _local_queue(request: Request | None):
+    from services.local_queue import LocalTaskQueue
+
+    queue = getattr(request.app.state, "redis", None) if request is not None else None
+    return queue if isinstance(queue, LocalTaskQueue) else None
+
+
+async def _stop_file_processing(request: Request | None, db: AsyncSession, db_file: File, wait: bool = False) -> bool:
+    """Stop a pending or running parse. Returns True when there was something to stop.
+
+    The file is marked 'cancelled' right away; the parse task notices it (or is cancelled
+    directly when it runs in the embedded queue), removes what it already stored and exits.
+    """
+    if db_file.status not in ACTIVE_FILE_STATUSES:
+        return False
+    db_file.status = "cancelled"
+    db_file.error_message = None
+    db_file.processing_message = None
+    await db.commit()
+
+    queue = _local_queue(request)
+    if queue is not None and db_file.job_id:
+        if queue.cancel_job(db_file.job_id) and wait:
+            await queue.wait_job(db_file.job_id, timeout=8.0)
+    return True
+
+
+async def _delete_file(db: AsyncSession, db_file: File, request: Request | None = None) -> None:
     from models.segment import Segment
     from models.block import Block
     from models.image import Image
 
+    # A running parse would keep writing blocks and vectors for a file that no longer exists.
+    await _stop_file_processing(request, db, db_file, wait=True)
+
     try:
-        Path(db_file.file_path).unlink(missing_ok=True)
+        _resolve_db_file_path(db_file).unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -130,16 +183,39 @@ async def upload_file(
 ) -> FileResponse:
     await require_project(db, project_id, current_user)
 
-    ext = Path(file.filename or "").suffix.lower()
+    clean_filename = unicodedata.normalize("NFC", Path(file.filename or "document.txt").name)
+    ext = Path(clean_filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"File type '{ext}' not supported.",
         )
 
+    if clean_filename.startswith("~$") or clean_filename.lower() in {
+        ".ds_store", "thumbs.db", "desktop.ini",
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Temporary or system files cannot be uploaded.",
+        )
+
+    if ext.lstrip(".") in TEXT_EXTENSIONS:
+        sample = await file.read(8192)
+        await file.seek(0)
+        if not sample:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="The text file is empty.",
+            )
+        if looks_like_binary(sample):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="The file contains binary data and cannot be parsed as text.",
+            )
+
     project_dir = UPLOAD_DIR / project_id
     project_dir.mkdir(parents=True, exist_ok=True)
-    dest = project_dir / file.filename
+    dest = project_dir / clean_filename
 
     file_size = 0
     async with aiofiles.open(dest, "wb") as f:
@@ -147,11 +223,18 @@ async def upload_file(
             file_size += len(chunk)
             await f.write(chunk)
 
+    if file_size == 0:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The uploaded file is empty.",
+        )
+
     db_file = File(
         project_id=project_id,
-        file_name=file.filename,
-        file_path=str(dest),
-        file_type=_file_type(file.filename or ""),
+        file_name=clean_filename,
+        file_path=to_portable_path(dest),
+        file_type=_file_type(clean_filename),
         file_size=file_size,
         status="pending",
         processing_current=0,
@@ -179,11 +262,12 @@ async def upload_file(
 async def delete_file(
     project_id: str,
     file_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
     db_file = await _get_file_or_404(db, file_id, current_user, project_id)
-    await _delete_file(db, db_file)
+    await _delete_file(db, db_file, request)
 
 
 file_router = APIRouter(prefix="/files", tags=["files"])
@@ -257,11 +341,158 @@ async def get_file_by_id(
 @file_router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_file_by_id(
     file_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
     db_file = await _get_file_or_404(db, file_id, current_user)
-    await _delete_file(db, db_file)
+    await _delete_file(db, db_file, request)
+
+
+class FileIdsRequest(BaseModel):
+    file_ids: list[str]
+
+
+async def _owned_files(db: AsyncSession, file_ids: list[str], current_user: User) -> list[File]:
+    ids = list(dict.fromkeys(i for i in file_ids if i))[:MAX_BATCH_FILES]
+    if not ids:
+        return []
+    result = await db.execute(
+        select(File)
+        .join(Project, File.project_id == Project.id)
+        .where(File.id.in_(ids), Project.owner_user_id == current_user.id)
+    )
+    return list(result.scalars().all())
+
+
+@file_router.post("/{file_id}/cancel")
+async def cancel_file_processing(
+    file_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    db_file = await _get_file_or_404(db, file_id, current_user)
+    stopped = await _stop_file_processing(request, db, db_file)
+    return {"id": db_file.id, "status": db_file.status, "stopped": stopped}
+
+
+@file_router.post("/cancel/batch")
+async def cancel_files_processing(
+    body: FileIdsRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    stopped: list[str] = []
+    for db_file in await _owned_files(db, body.file_ids, current_user):
+        if await _stop_file_processing(request, db, db_file):
+            stopped.append(db_file.id)
+    return {"stopped": stopped}
+
+
+@file_router.post("/delete/batch")
+async def delete_files_batch(
+    body: FileIdsRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    owned = await _owned_files(db, body.file_ids, current_user)
+    # Stop every running parse first so the deletions below do not wait on each other.
+    for db_file in owned:
+        await _stop_file_processing(request, db, db_file)
+    queue = _local_queue(request)
+    if queue is not None:
+        await asyncio.gather(*(queue.wait_job(f.job_id, timeout=8.0) for f in owned if f.job_id))
+    deleted: list[str] = []
+    for db_file in owned:
+        await db.refresh(db_file)
+        await _delete_file(db, db_file, request)
+        deleted.append(db_file.id)
+    return {"deleted": deleted}
+
+
+class NameSuggestionRequest(BaseModel):
+    output_language: str | None = None
+
+
+@file_router.post("/{file_id}/name-suggestion")
+async def suggest_file_name(
+    file_id: str,
+    body: NameSuggestionRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Suggest "Author - Year - Title" from the file name and opening pages. Renames nothing."""
+    from models.block import Block
+    from services.source_naming import suggest_source_name
+
+    db_file = await _get_file_or_404(db, file_id, current_user)
+    if db_file.status != "ready":
+        raise HTTPException(status_code=400, detail=ui_msg("file_not_ready"))
+
+    rows = (
+        await db.execute(
+            select(Block.content)
+            .where(Block.file_id == db_file.id)
+            .order_by(Block.block_index.asc())
+            .limit(80)
+        )
+    ).scalars().all()
+    opening, length = [], 0
+    for text in rows:
+        if not text:
+            continue
+        opening.append(text)
+        length += len(text)
+        if length > 6000:
+            break
+
+    language = (body.output_language if body else None) or "Turkish"
+    try:
+        suggestion = await suggest_source_name(
+            file_name=db_file.file_name,
+            opening_text="\n".join(opening),
+            output_language=language,
+            user_id=current_user.id,
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail=ui_msg("llm_not_configured"))
+    return {"id": db_file.id, "file_name": db_file.file_name, **suggestion}
+
+
+class FileReprocessRequest(BaseModel):
+    output_language: str | None = None
+
+
+@file_router.post("/{file_id}/reprocess", response_model=FileResponse)
+async def reprocess_file(
+    file_id: str,
+    request: Request,
+    body: FileReprocessRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """Process a stopped or failed file again from the start."""
+    db_file = await _get_file_or_404(db, file_id, current_user)
+    if db_file.status not in STOPPABLE_TO_RETRY_STATUSES:
+        raise HTTPException(status_code=409, detail=ui_msg("file_not_reprocessable"))
+    redis = request.app.state.redis
+    if redis is None:
+        raise HTTPException(status_code=503, detail=ui_msg("queue_unavailable_file"))
+    db_file.status = "pending"
+    db_file.error_message = None
+    db_file.processing_current = 0
+    db_file.processing_total = None
+    db_file.processing_message = None
+    await db.commit()
+    output_language = (body.output_language if body else None) or None
+    job = await redis.enqueue_job("parse_file_task", db_file.id, output_language)
+    db_file.job_id = job.job_id
+    await db.commit()
+    await db.refresh(db_file)
+    return db_file
 
 
 @file_router.get("/{file_id}/content")
@@ -278,7 +509,7 @@ async def get_file_content(
     db_file = await _get_file_or_404(db, file_id, current_user)
 
     if db_file.status != "ready":
-        raise HTTPException(status_code=400, detail="文件尚未处理完成")
+        raise HTTPException(status_code=400, detail=ui_msg("file_not_ready"))
 
     result = await db.execute(
         select(Block)
@@ -387,7 +618,7 @@ async def get_file_pages(
     db_file = await _get_file_or_404(db, file_id, current_user)
 
     if db_file.status != "ready":
-        raise HTTPException(status_code=400, detail="文件尚未处理完成")
+        raise HTTPException(status_code=400, detail=ui_msg("file_not_ready"))
 
     result = await db.execute(
         select(func.count())
@@ -431,7 +662,7 @@ async def get_file_pages(
         )
         block_count = result.scalar() or 0
 
-        total_pages = await asyncio.to_thread(_get_pdf_page_count_sync, db_file.file_path)
+        total_pages = await asyncio.to_thread(_get_pdf_page_count_sync, str(_resolve_db_file_path(db_file)))
         if total_pages == 0:
             total_pages = 1
 
@@ -446,6 +677,21 @@ async def get_file_pages(
         if block_count > 0:
             total_pages = 1
             page_list = [{"page": 1, "block_count": block_count}]
+
+    # Page navigation and page-scoped segments are a PDF preview concern.
+    # HTML/TXT previews render the flat content payload, so avoid shipping
+    # thousands of segment rows just to expose printed page metadata.
+    if not is_pdf:
+        return {
+            "file_id": file_id,
+            "file_name": db_file.file_name,
+            "file_type": db_file.file_type,
+            "has_pages": bool(page_list),
+            "total_pages": total_pages,
+            "pages": page_list,
+            "segments": [],
+            "blocks": [],
+        }
 
     result = await db.execute(
         select(Segment)
@@ -509,7 +755,7 @@ async def get_file_raw(
 ):
     db_file = await _get_file_or_404(db, file_id, current_user)
 
-    file_path = Path(db_file.file_path)
+    file_path = _resolve_db_file_path(db_file)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
@@ -518,8 +764,10 @@ async def get_file_raw(
         content_type = "application/pdf"
     elif db_file.file_type == "docx":
         content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif db_file.file_type == "txt":
+    elif db_file.file_type in ("txt", "md", "markdown"):
         content_type = "text/plain; charset=utf-8"
+    elif db_file.file_type in ("htm", "html"):
+        content_type = "text/html; charset=utf-8"
     elif db_file.file_type == "wav":
         content_type = "audio/wav"
     elif db_file.file_type == "mp3":
@@ -550,7 +798,7 @@ async def preview_file(
 
     db_file = await _get_file_or_404(db, file_id, current_user)
 
-    file_path = Path(db_file.file_path)
+    file_path = _resolve_db_file_path(db_file)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
@@ -586,7 +834,7 @@ async def preview_embedded_image(
         raise HTTPException(status_code=400, detail="Invalid image index")
 
     db_file = await _get_file_or_404(db, file_id, current_user)
-    image_dir = Path(db_file.file_path).parent / "images" / file_id
+    image_dir = _resolve_db_file_path(db_file).parent / "images" / file_id
     if not image_dir.is_dir():
         raise HTTPException(status_code=404, detail="Images not found")
 
@@ -802,7 +1050,7 @@ async def get_image_info(
         raise HTTPException(status_code=400, detail="Not an image file")
 
     if db_file.status != "ready":
-        raise HTTPException(status_code=400, detail="文件尚未处理完成")
+        raise HTTPException(status_code=400, detail=ui_msg("file_not_ready"))
 
     result = await db.execute(
         select(Image)

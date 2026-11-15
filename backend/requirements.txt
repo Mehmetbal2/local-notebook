@@ -20,7 +20,7 @@ mcp>=1,<2
 jsonschema>=4.25.1
 
 # ── Vector DB ─────────────────────────────────────────────────────────────────
-# 只装客户端 pymilvus,服务端走 docker-compose 的 standalone milvus(image: milvusdb/milvus)
+# Only the pymilvus client is installed; the server is the standalone Milvus from docker-compose (image: milvusdb/milvus)
 pymilvus==2.5.6
 
 # ── HTTP Client ──────────────────────────────────────────────────────────────
@@ -29,10 +29,11 @@ httpx==0.28.1
 # ── File I/O ──────────────────────────────────────────────────────────────────
 aiofiles==24.1.0
 pypdf==6.9.2
+pymupdf>=1.26.4
 python-docx==1.2.0
-pypandoc-binary==1.14     # 带预编译 pandoc 二进制,避免容器里再装 apt 包
-EbookLib==0.18          # EPUB 读取(解析 OPF/spine 阅读顺序)
-beautifulsoup4==4.13.3  # EPUB 章节 XHTML 清洗与正文抽取
+pypandoc-binary==1.14     # ships a prebuilt pandoc binary, so no apt package is needed in the container
+EbookLib==0.18          # EPUB reading (OPF/spine reading order)
+beautifulsoup4==4.13.3  # cleans EPUB chapter XHTML and extracts body text
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 python-jose==3.5.0
@@ -49,4 +50,4 @@ loguru>=0.6.0,<0.8
 typing-extensions>=4.15.0
 
 # ── Dev / Test (Optional) ─────────────────────────────────────────────────────
-# fpdf2==2.8.3  # 用于创建示例 PDF 文件
+# fpdf2==2.8.3  # used to create sample PDF files

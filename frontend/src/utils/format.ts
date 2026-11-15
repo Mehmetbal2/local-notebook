@@ -18,6 +18,18 @@ function formatRelativeValue(value: number, unit: Intl.RelativeTimeFormatUnit, t
 }
 
 
+/**
+ * Parse a timestamp from the server. The backend stores UTC; a value without a zone
+ * ("2026-11-14T08:38:24") is therefore UTC, not local time, so "Z" is added before parsing.
+ */
+export function parseServerDate(dateStr: string): Date {
+  const value = (dateStr || '').trim()
+  const isoWithoutZone = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/
+  if (isoWithoutZone.test(value)) return new Date(`${value.replace(' ', 'T')}Z`)
+  return new Date(value)
+}
+
+
 export function escapeHtml(text: string): string {
   const div = document.createElement('div')
   div.textContent = text
@@ -36,7 +48,7 @@ export function formatFileSize(bytes: number): string {
 
 export function formatDate(dateStr: string, targetLocale: Locale = locale.value): string {
   if (!dateStr) return ''
-  const date = new Date(dateStr)
+  const date = parseServerDate(dateStr)
   return date.toLocaleDateString(getIntlLocale(targetLocale), {
     year: 'numeric',
     month: '2-digit',
@@ -50,7 +62,7 @@ export function formatRelativeTime(dateStr: string, options: RelativeTimeOptions
   const targetLocale = options.targetLocale || locale.value
   const maxRelativeDays = options.maxRelativeDays ?? 7
   const fallback = options.fallback || 'date'
-  const date = new Date(dateStr)
+  const date = parseServerDate(dateStr)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffMins = Math.floor(diffMs / 60000)
@@ -68,7 +80,7 @@ export function formatRelativeTime(dateStr: string, options: RelativeTimeOptions
 
 export function formatMessageTimestamp(dateStr: string, targetLocale: Locale = locale.value): string {
   if (!dateStr) return ''
-  const date = new Date(dateStr)
+  const date = parseServerDate(dateStr)
   const now = new Date()
 
   const isToday = date.getFullYear() === now.getFullYear() &&

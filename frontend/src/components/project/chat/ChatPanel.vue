@@ -52,6 +52,7 @@
       @copy-user-message="emit('copy-user-message', $event)"
       @copy-message-as-text="emit('copy-message-as-text', $event)"
       @copy-message-as-markdown="emit('copy-message-as-markdown', $event)"
+      @save-message-as-note="emit('save-message-as-note', $event)"
       @regenerate-message="emit('regenerate-message', $event)"
       @enter-export-mode-with-selection="emit('enter-export-mode-with-selection', $event)"
     />
@@ -88,6 +89,7 @@
       :input-message="inputMessage"
       :web-search-configured="webSearchConfigured"
       :source-count="sourceCount"
+      :general-chat="generalChat"
       :has-ready-files="hasReadyFiles"
       :has-current-session="hasCurrentSession"
       :is-streaming="isStreaming"
@@ -148,6 +150,7 @@ interface Props {
   inputMessage: string
   webSearchConfigured: boolean
   sourceCount: number
+  generalChat: boolean
   hasCurrentSession: boolean
   copyToastVisible: boolean
   copyToastMessage: string
@@ -184,6 +187,7 @@ const emit = defineEmits<{
   'copy-user-message': [message: Message]
   'copy-message-as-text': [message: Message]
   'copy-message-as-markdown': [message: Message]
+  'save-message-as-note': [message: Message]
   'regenerate-message': [index: number]
   'enter-export-mode-with-selection': [index: number]
   'force-scroll-to-bottom': []
@@ -229,9 +233,10 @@ defineExpose({
   display: flex;
   flex-direction: column;
   background: var(--bg-white);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   min-width: 400px;
   position: relative;
+  overflow: hidden;
 }
 
 .scroll-to-bottom-btn {

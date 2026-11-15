@@ -56,7 +56,7 @@ class Capability:
 
     type: str
     name: str
-    modality: str  # 'text' | 'image' | 'video' (MVP 仅 text)
+    modality: str  # 'text' | 'image' | 'video' (only text for now)
     tools: List[str] = field(default_factory=list)
 
 

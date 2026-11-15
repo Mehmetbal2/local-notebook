@@ -147,6 +147,7 @@
 </template>
 
 <script setup lang="ts">
+import { useEscapeClose } from '../../composables/useEscapeClose'
 import { ref, computed, watch } from 'vue'
 import { t } from '../../i18n'
 import { getImagePreviewUrl } from '../../services/api'
@@ -350,6 +351,8 @@ watch(() => props.visible, (newVal) => {
     selectedFileIds.value = []
   }
 })
+
+useEscapeClose(() => props.visible, () => handleClose())
 </script>
 
 <style scoped>
@@ -377,7 +380,7 @@ watch(() => props.visible, (newVal) => {
   max-width: 90vw;
   max-height: 85vh;
   background: var(--bg-white);
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
   display: flex;
   flex-direction: column;
@@ -730,7 +733,7 @@ watch(() => props.visible, (newVal) => {
 .btn-cancel,
 .btn-confirm {
   padding: 10px 24px;
-  border-radius: 8px;
+  border-radius: var(--radius-full);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;

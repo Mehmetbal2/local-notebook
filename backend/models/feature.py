@@ -7,13 +7,14 @@ from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
+from utils.time import utc_isoformat
 
 
 class Feature(Base):
-    """报告中的一个栏目(sub-report)。
+    """One section of a report (sub-report).
 
-    隶属于某个 Workflow(step)，由 while-loop agent 生成内容并落成 blocks。
-    生成路径中应绑定 workflow_id；nullable 仅用于兼容历史数据。
+    Belongs to a Workflow (step); the while-loop agent generates its content as blocks.
+    Quick tools and notes have no workflow_id; report sections always set it.
     """
 
     __tablename__ = "features"
@@ -30,7 +31,7 @@ class Feature(Base):
 
     feature_type: Mapped[str] = mapped_column(String(50), nullable=False, default="text_section")
     step_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # 栏目名(同时作为标题展示)
+    # section name (also shown as the title)
     step_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
@@ -106,7 +107,7 @@ class Feature(Base):
         return [str(item) for item in depends_on if item]
 
     def to_content_dict(self) -> Dict[str, Any]:
-        """前端 WorkflowContentFeature / Feature 形状。"""
+        """Shape of the frontend WorkflowContentFeature / Feature."""
         return {
             "id": self.id,
             "project_id": self.project_id,
@@ -121,4 +122,12 @@ class Feature(Base):
             "blocks": self.get_blocks(),
             "citations": self.get_citations(),
             "generation_report": self.generation_report or "",
+            "created_at": utc_isoformat(self.created_at),
+            "started_at": utc_isoformat(self.started_at),
+            "finished_at": utc_isoformat(self.finished_at),
+            "note_source": self.get_custom_config().get("note_source"),
+            "note_markdown": self.get_custom_config().get("markdown"),
+            "progress": self.get_custom_config().get("progress") if self.status in ("pending", "processing") else None,
+            "research_sources": self.get_custom_config().get("sources") if self.feature_type == "deep_research" else None,
+            "research_scope": self.get_custom_config().get("scope") if self.feature_type == "deep_research" else None,
         }

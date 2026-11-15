@@ -10,14 +10,7 @@
         </button>
         <h1>{{ $t('ui.userManagement') }}</h1>
       </div>
-      <div class="header-right">
-        <span class="admin-badge">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-          </svg>
-          {{ currentUsername }}
-        </span>
-      </div>
+      <AppHeaderActions current="admin" />
     </header>
 
     <main class="admin-main">
@@ -190,8 +183,9 @@ import {
   type AdminUsageTotals,
   type AdminUser,
 } from '../services/api'
-import { getDisplayUsername } from '../services/auth'
+import AppHeaderActions from '../components/common/AppHeaderActions.vue'
 import { locale, t } from '../i18n'
+import { parseServerDate } from '../utils/format'
 
 const router = useRouter()
 
@@ -225,7 +219,6 @@ const usageFilters = reactive({
   user_id: '',
 })
 
-const currentUsername = computed(() => getDisplayUsername() || t('ui.admin'))
 const adminCount = computed(() => users.value.filter(user => user.role === 'admin').length)
 
 function toast(message: string, type: 'success' | 'error' = 'success') {
@@ -237,7 +230,7 @@ function errorMessage(error: any): string {
 }
 
 function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString(locale.value, {
+  return parseServerDate(value).toLocaleString(locale.value, {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -367,9 +360,10 @@ onMounted(() => {
 
 <style scoped>
 .admin-page {
-  min-height: 100vh;
-  background: #f7f8fa;
-  color: #1f2937;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--bg-main);
+  color: var(--text-primary);
 }
 
 .admin-header {
@@ -379,8 +373,10 @@ onMounted(() => {
   justify-content: space-between;
   gap: 16px;
   padding: 0 24px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--bg-main);
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 
 .header-left,
@@ -440,7 +436,7 @@ h1 {
 
 .section-header p {
   margin: 5px 0 0;
-  color: #6b7280;
+  color: var(--text-tertiary);
   font-size: 13px;
 }
 
@@ -455,10 +451,10 @@ h1 {
 .usage-filters input,
 .usage-filters select {
   height: 34px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: #fff;
-  color: #374151;
+  color: var(--text-secondary);
   padding: 0 9px;
   font-size: 13px;
 }
@@ -473,22 +469,22 @@ h1 {
 .usage-summary span {
   padding: 5px 10px;
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-color);
   border-radius: 999px;
-  color: #4b5563;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
 .toolbar-summary {
   flex-wrap: wrap;
-  color: #6b7280;
+  color: var(--text-tertiary);
   font-size: 13px;
 }
 
 .toolbar-summary span {
   padding: 4px 10px;
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-color);
   border-radius: 999px;
 }
 
@@ -496,9 +492,9 @@ h1 {
 .primary-btn,
 .plain-btn,
 .icon-btn {
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-strong);
   background: #fff;
-  color: #374151;
+  color: var(--text-secondary);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
@@ -512,8 +508,8 @@ h1 {
 }
 
 .primary-btn {
-  border-color: #2563eb;
-  background: #2563eb;
+  border-color: var(--primary-color);
+  background: var(--primary-color);
   color: #fff;
 }
 
@@ -533,11 +529,11 @@ h1 {
 .icon-text-btn:hover,
 .plain-btn:hover,
 .icon-btn:hover {
-  background: #f3f4f6;
+  background: var(--bg-hover);
 }
 
 .primary-btn:hover:not(:disabled) {
-  background: #1d4ed8;
+  background: var(--primary-hover);
 }
 
 button:disabled,
@@ -548,20 +544,20 @@ select:disabled {
 
 .admin-badge {
   gap: 6px;
-  color: #6b7280;
+  color: var(--text-tertiary);
   font-size: 13px;
 }
 
 .state-row {
   padding: 48px 0;
   text-align: center;
-  color: #6b7280;
+  color: var(--text-tertiary);
 }
 
 .table-wrap {
   overflow-x: auto;
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
 }
 
@@ -585,7 +581,7 @@ td {
 }
 
 th {
-  color: #6b7280;
+  color: var(--text-tertiary);
   font-size: 12px;
   font-weight: 650;
   background: #fafafa;
@@ -602,7 +598,7 @@ tr:last-child td {
 }
 
 .username-cell small {
-  color: #9ca3af;
+  color: var(--text-disabled);
   font-size: 11px;
 }
 
@@ -622,10 +618,10 @@ tr:last-child td {
 
 .modal input {
   height: 36px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: #fff;
-  color: #1f2937;
+  color: var(--text-primary);
   padding: 0 10px;
   font-size: 14px;
 }
@@ -641,8 +637,8 @@ tr:last-child td {
 }
 
 .role-badge.user {
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .modal-overlay {
@@ -660,7 +656,7 @@ tr:last-child td {
   width: 100%;
   max-width: 420px;
   background: #fff;
-  border-radius: 8px;
+  border-radius: var(--radius-xl);
   padding: 22px;
   box-shadow: 0 18px 45px rgba(15, 23, 42, 0.24);
 }
@@ -675,7 +671,7 @@ tr:last-child td {
   flex-direction: column;
   gap: 7px;
   margin-bottom: 14px;
-  color: #374151;
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
 }
@@ -686,14 +682,14 @@ tr:last-child td {
 
 .modal-desc {
   margin: -8px 0 16px;
-  color: #6b7280;
+  color: var(--text-tertiary);
   font-size: 13px;
 }
 
 .form-error {
   margin: 0 0 14px;
   padding: 10px 12px;
-  background: #fef2f2;
+  background: var(--error-soft);
   border: 1px solid #fecaca;
   border-radius: 6px;
   color: #b91c1c;

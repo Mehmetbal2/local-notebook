@@ -3,11 +3,12 @@
     <div
       v-if="block.extra?.is_table"
       :data-block-id="block.block_id"
+      dir="auto"
       class="preview-block table-block"
       :class="{ highlighted: highlightBlockIds.includes(block.block_id) }"
     >
       <div v-if="block.extra?.table_caption" class="table-caption">{{ block.extra.table_caption }}</div>
-      <div class="table-content" v-html="block.extra?.table_html || renderLatexOnly(block.content)"></div>
+      <div class="table-content" v-html="block.extra?.table_html ? sanitizeHtml(block.extra.table_html) : renderLatexOnly(block.content)"></div>
       <div v-if="block.extra?.table_footnote" class="table-footnote">{{ block.extra.table_footnote }}</div>
     </div>
 
@@ -29,6 +30,7 @@
     <div
       v-else
       :data-block-id="block.block_id"
+      dir="auto"
       class="preview-block"
       :class="{ [block.block_type]: true, highlighted: highlightBlockIds.includes(block.block_id) }"
     >
@@ -45,7 +47,7 @@
 <script setup lang="ts">
 import { getEmbeddedImagePreviewUrl } from '@/services/api'
 import type { FileContent } from '@/types'
-import { renderLatexOnly } from '@/utils'
+import { renderLatexOnly, sanitizeHtml } from '@/utils'
 
 const props = defineProps<{
   blocks: FileContent['blocks']
@@ -65,12 +67,18 @@ function getBlockImagePreviewUrl(block: FileContent['blocks'][number]): string {
 <style scoped>
 .preview-block {
   margin-bottom: 8px;
-  line-height: 1.6;
-  color: #1a1a1a;
+  line-height: 1.75;
+  color: var(--text-primary);
   font-size: 14px;
   transition: background 0.3s;
   padding: 2px 8px;
   border-radius: 4px;
+  white-space: pre-line;
+}
+
+.preview-block.table-block,
+.preview-block.image-block {
+  white-space: normal;
 }
 
 .preview-block.heading {

@@ -15,10 +15,11 @@ from dependencies.permissions import require_project
 from models.file import File
 from models.project import Project
 from models.user import User
+from paths import get_upload_dir
 from schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
 
 logger = logging.getLogger(__name__)
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads"))
+UPLOAD_DIR = get_upload_dir()
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 

@@ -56,15 +56,22 @@
       :hovering-file-id="hoveringFileId"
       :open-menu-file-id="openMenuFileId"
       :is-all-selected="isAllSelected"
+      :naming-file-ids="namingFileIds"
       @toggle-collapse="emit('toggle-collapse')"
       @trigger-file-upload="emit('trigger-file-upload')"
       @toggle-select-all="emit('toggle-select-all')"
+      @set-file-selection="(ids, mode) => emit('set-file-selection', ids, mode)"
       @open-file-preview="emit('open-file-preview', $event)"
       @set-hovering-file="emit('set-hovering-file', $event)"
       @toggle-file-menu="emit('toggle-file-menu', $event)"
       @rename-file="(fileId, fileName) => emit('rename-file', fileId, fileName)"
       @delete-file="emit('delete-file', $event)"
       @toggle-file-selection="emit('toggle-file-selection', $event)"
+      @cancel-files="emit('cancel-files', $event)"
+      @delete-files="emit('delete-files', $event)"
+      @reprocess-files="emit('reprocess-files', $event)"
+      @suggest-names="emit('suggest-names', $event)"
+      @dismiss-naming="emit('dismiss-naming', $event)"
     />
   </aside>
 </template>
@@ -89,6 +96,7 @@ defineProps<{
   hoveringFileId: string | null
   openMenuFileId: string | null
   isAllSelected: boolean
+  namingFileIds: string[]
   previewingFile: FileInfo | null
   previewingFileName: string
   previewingFileContent: FileContent | null
@@ -118,11 +126,17 @@ const emit = defineEmits<{
   (e: 'toggle-collapse'): void
   (e: 'trigger-file-upload'): void
   (e: 'toggle-select-all'): void
+  (e: 'set-file-selection', fileIds: string[], mode: 'add' | 'only'): void
   (e: 'open-file-preview', fileId: string): void
   (e: 'set-hovering-file', fileId: string | null): void
   (e: 'toggle-file-menu', fileId: string): void
   (e: 'rename-file', fileId: string, fileName: string): void
   (e: 'delete-file', fileId: string): void
+  (e: 'cancel-files', fileIds: string[]): void
+  (e: 'delete-files', fileIds: string[]): void
+  (e: 'reprocess-files', fileIds: string[]): void
+  (e: 'suggest-names', fileIds: string[]): void
+  (e: 'dismiss-naming', fileIds: string[]): void
   (e: 'toggle-file-selection', fileId: string): void
   (e: 'close-preview'): void
   (e: 'update:summaryExpanded', value: boolean): void

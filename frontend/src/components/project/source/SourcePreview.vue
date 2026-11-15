@@ -362,7 +362,7 @@ defineExpose({
 }
 
 .preview-file-name svg {
-  color: #1a73e8;
+  color: var(--primary-color);
   flex-shrink: 0;
 }
 
@@ -470,7 +470,7 @@ defineExpose({
   padding: 0 14px 14px;
   font-size: 14px;
   line-height: 1.8;
-  color: #1a1a1a;
+  color: var(--text-primary);
 }
 
 .source-guide-content :deep(strong) {
@@ -490,7 +490,7 @@ defineExpose({
   padding: 4px 12px;
   font-size: 14px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: var(--text-primary);
   background: var(--bg-hover);
   border: 1px solid var(--border-color);
   border-radius: 16px;

@@ -3,8 +3,8 @@
 
     <header class="project-header">
       <div class="header-left">
-        <button class="back-btn" @click="goBack" :title="$t('ui.backToHome')">
-          <img src="/logo/logo.png" alt="Local Notebook" class="back-logo" />
+        <button class="back-btn" type="button" @click="goBack" :title="$t('ui.backToHome')" :aria-label="$t('ui.backToHome')">
+          <AppLogo :show-text="false" />
         </button>
         <div class="project-title-wrapper">
           <input
@@ -25,33 +25,10 @@
             class="project-title"
             @click="startTitleEdit"
             :title="$t('ui.clickToEditProjectName')"
-          >{{ project?.name || 'Untitled' }}</h1>
+           dir="auto">{{ project?.name || $t('ui.untitledProject') }}</h1>
         </div>
       </div>
-      <div class="header-right">
-        <LanguageSwitcher />
-        <button v-if="canAdmin" class="btn-settings" @click="router.push('/admin')" :title="$t('ui.userManagement')">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zM8 11c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" />
-          </svg>
-        </button>
-        <button v-if="canAdmin" class="btn-settings" @click="router.push('/settings')" :title="$t('ui.settings')">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87a.49.49 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/>
-          </svg>
-        </button>
-        <span class="user-badge">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-          </svg>
-          <span>{{ displayUsername }}</span>
-        </span>
-        <button class="btn-settings" @click="logout" :title="$t('ui.logOut')">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3h-8v2h8v14h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
-          </svg>
-        </button>
-      </div>
+      <AppHeaderActions current="project" />
     </header>
 
 
@@ -72,6 +49,7 @@
           :hovering-file-id="hoveringFileId"
           :open-menu-file-id="openMenuFileId"
           :is-all-selected="isAllSelected"
+          :naming-file-ids="filesNeedingNames.map(f => f.id)"
           :previewing-file="previewingFile"
           :previewing-file-name="previewingFileName"
           :previewing-file-content="previewingFileContent"
@@ -98,11 +76,17 @@
           @toggle-collapse="leftPanelCollapsed = !leftPanelCollapsed"
           @trigger-file-upload="triggerFileUpload"
           @toggle-select-all="toggleSelectAll"
+          @set-file-selection="setFileSelection"
           @open-file-preview="openFilePreview"
           @set-hovering-file="hoveringFileId = $event"
           @toggle-file-menu="toggleFileMenu"
           @rename-file="(fileId, fileName) => openRenameModal('file', fileId, fileName)"
           @delete-file="handleDeleteFile"
+          @cancel-files="handleCancelFiles"
+          @delete-files="handleDeleteFiles"
+          @reprocess-files="handleReprocessFiles"
+          @suggest-names="openNamingDialog"
+          @dismiss-naming="dismissNamingReminder"
           @toggle-file-selection="toggleFileSelection"
           @close-preview="closePreview"
           @update:summary-expanded="summaryExpanded = $event"
@@ -160,7 +144,8 @@
         :scroll-btn-bottom="scrollBtnBottom"
         :input-message="inputMessage"
         :web-search-configured="webSearchConfigured"
-        :source-count="readyFiles.length"
+        :source-count="chatFileIds.length"
+        :general-chat="isGeneralChat"
         :has-current-session="Boolean(currentSession)"
         :copy-toast-visible="copyToastVisible"
         :copy-toast-message="copyToastMessage"
@@ -192,6 +177,7 @@
         @copy-user-message="copyUserMessage"
         @copy-message-as-text="copyMessageAsText"
         @copy-message-as-markdown="copyMessageAsMarkdown"
+        @save-message-as-note="handleSaveMessageAsNote"
         @regenerate-message="regenerateMessage"
         @enter-export-mode-with-selection="enterExportModeWithSelection"
         @force-scroll-to-bottom="forceScrollToBottom"
@@ -239,6 +225,7 @@
         @close-workflow-detail="closeWorkflowDetail"
         @cancel-workflow="handleCancelWorkflow"
         @delete-workflow="handleDeleteWorkflow"
+        @rename-workflow="(id, name) => openRenameModal('workflow', id, name)"
         @workflow-title-update="handleWorkflowTitleUpdate"
         @workflow-citation-click="handleWorkflowCitationClick"
         @clear-workflow-citation="clearWorkflowCitation"
@@ -251,6 +238,12 @@
         @open-tool-config="openToolConfig"
         @view-feature-detail="handleFeatureClick"
         @delete-feature="handleDeleteFeature"
+        @rename-feature="(feature, name) => openRenameModal('feature', feature.id, name)"
+        @feature-regenerate="confirmRegenerateFeature"
+        @feature-edit-note="openNoteEditorForActiveFeature"
+        @add-note="openNoteEditor"
+        @web-imported="handleWebImported"
+        @ask-in-chat="handleAskInChat"
         @open-workflow-config="openWorkflowConfig"
         @view-workflow-detail="viewWorkflowDetail"
       />
@@ -294,9 +287,22 @@
       :current-file-count="files.length"
       :max-file-count="sourceMaxFileCount"
       :is-uploading="isUploading"
+      :project-id="projectId"
       @close="showUploadModal = false"
       @upload-files="handleUploadFiles"
       @insert-text="handleInsertText"
+      @web-imported="handleWebImported"
+      @deep-research-started="handleDeepResearchStarted"
+    />
+
+    <NoteEditorModal
+      :visible="noteEditor.visible"
+      :is-editing="noteEditor.featureId !== null"
+      :initial-title="noteEditor.title"
+      :initial-content="noteEditor.content"
+      :saving="noteEditor.saving"
+      @close="closeNoteEditor"
+      @submit="submitNoteEditor"
     />
 
     <ToolConfigModal
@@ -347,6 +353,14 @@
       @confirm="handleVideoGenerationConfirm"
     />
 
+
+    <SourceNamingDialog
+      :visible="namingDialog.visible"
+      :files="namingDialogFiles"
+      :saving="namingDialog.saving"
+      @close="closeNamingDialog"
+      @confirm="confirmSourceNames"
+    />
 
     <RenameModal
       v-model:visible="renameModal.visible"
@@ -415,6 +429,7 @@ import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import FeatureConfigModal from '../components/common/FeatureConfigModal.vue'
 import UploadSourceModal from '../components/common/UploadSourceModal.vue'
 import ToolConfigModal from '../components/common/ToolConfigModal.vue'
+import NoteEditorModal from '../components/common/NoteEditorModal.vue'
 import WorkflowConfigModal from '../components/common/WorkflowConfigModal.vue'
 import ImageGenerationModal from '../components/common/ImageGenerationModal.vue'
 import VideoGenerationModal from '../components/common/VideoGenerationModal.vue'
@@ -424,12 +439,12 @@ import CollapsedSourceRail from '../components/project/source/CollapsedSourceRai
 import SourceBlockCopyPanel from '../components/project/source/SourceBlockCopyPanel.vue'
 import SourcePanel from '../components/project/source/SourcePanel.vue'
 import SessionHistoryPanel from '../components/SessionHistoryPanel.vue'
-import LanguageSwitcher from '../components/common/LanguageSwitcher.vue'
+import AppLogo from '../components/common/AppLogo.vue'
+import AppHeaderActions from '../components/common/AppHeaderActions.vue'
 import { useChatScroll } from '../composables/useChatScroll'
 import { useMessageRendering } from '../composables/useMessageRendering'
 import { usePanelResize } from '../composables/usePanelResize'
 import { useMessageExportSelection } from '../composables/useMessageExportSelection'
-import { clearTokens, getDisplayUsername, isAdmin } from '../services/auth'
 import {
   getProject,
   getSessions,
@@ -450,6 +465,7 @@ import {
 } from '../services/api'
 import type { Project, Session, Message, ContentPart, ToolExecuting, ToolStatusPart, ToolSummaryActivityPart, ToolSummaryPart, FeatureCitationRefPart } from '../types'
 import RenameModal from '../components/common/RenameModal.vue'
+import SourceNamingDialog from '../components/common/SourceNamingDialog.vue'
 import WebCitationTooltip from '../components/common/WebCitationTooltip.vue'
 import Toast from '../components/common/Toast.vue'
 import { t } from '../i18n'
@@ -462,10 +478,8 @@ import { useSourcePreview } from './projectPage/useSourcePreview'
 const route = useRoute()
 const router = useRouter()
 const projectId = route.params.id as string
-type ToolboxMode = 'tools' | 'oneclick'
+type ToolboxMode = 'tools' | 'analysis' | 'oneclick'
 const toolboxModeStorageKey = `project:${projectId}:toolboxMode`
-const displayUsername = computed(() => getDisplayUsername() || t('ui.defaultUser'))
-const canAdmin = computed(() => isAdmin())
 
 const project = ref<Project | null>(null)
 const sessions = ref<Session[]>([])
@@ -495,11 +509,23 @@ const {
   loadFiles,
   toggleFileSelection,
   toggleSelectAll,
+  setFileSelection,
   triggerFileUpload,
   handleUploadFiles,
   handleInsertText,
+  handleWebImported,
   stopFilePolling,
   handleDeleteFile,
+  handleCancelFiles,
+  handleDeleteFiles,
+  handleReprocessFiles,
+  filesNeedingNames,
+  namingDialog,
+  namingDialogFiles,
+  openNamingDialog,
+  closeNamingDialog,
+  dismissNamingReminder,
+  confirmSourceNames,
   renameFile,
   toggleFileMenu,
   handleClickOutside,
@@ -805,6 +831,14 @@ const {
   handleFeatureDetailRename,
   handleFeatureClick,
   handleDeleteFeature,
+  noteEditor,
+  saveMessageAsNote,
+  openNoteEditor,
+  openNoteEditorForActiveFeature,
+  closeNoteEditor,
+  submitNoteEditor,
+  regenerateActiveFeature,
+  handleDeepResearchStarted,
 } = useProjectFeatures({
   projectId,
   files,
@@ -814,6 +848,7 @@ const {
   rightPanelWidthBeforeReport,
   reportMinWidth: REPORT_MIN_WIDTH,
   showToast,
+  showConfirm,
   openRenameModal,
 })
 
@@ -1011,7 +1046,7 @@ const clickedCitationTop = ref<number>(0)
 
 function getInitialToolboxMode(): ToolboxMode {
   const cached = localStorage.getItem(toolboxModeStorageKey)
-  return cached === 'tools' || cached === 'oneclick' ? cached : 'oneclick'
+  return cached === 'tools' || cached === 'analysis' || cached === 'oneclick' ? cached : 'tools'
 }
 
 const toolboxMode = ref<ToolboxMode>(getInitialToolboxMode())
@@ -1047,8 +1082,7 @@ function highlightGeneratedTask(type: 'feature' | 'workflow', id: string) {
 }
 
 async function handleFeatureStarted(data: FeatureStartedData) {
-  toolboxMode.value = 'tools'
-  rightPanelCollapsed.value = false
+  showQuickToolResults()
   await loadFeatures()
   if (data.feature_id) {
     pollingFeatureIds.value.add(data.feature_id)
@@ -1069,8 +1103,7 @@ async function handleWorkflowStarted(data: WorkflowStartedData) {
 
 function handleToolExecutingSideEffects(tool: ToolExecuting) {
   if (tool.name === 'create_feature_generation') {
-    toolboxMode.value = 'tools'
-    rightPanelCollapsed.value = false
+    showQuickToolResults()
     loadFeatures()
     return
   }
@@ -1188,15 +1221,21 @@ function summarizeCompletedToolActivity(parts: ContentPart[], elapsedMs: number)
   return summarizedParts
 }
 
+const TOOLBOX_TAB_ORDER: ToolboxMode[] = ['tools', 'analysis', 'oneclick']
+
 watch(() => toolboxMode.value, (newVal, oldVal) => {
   localStorage.setItem(toolboxModeStorageKey, newVal)
-
-  if (newVal === 'tools' && oldVal === 'oneclick') {
-    transitionName.value = 'slide-right'
-  } else if (newVal === 'oneclick' && oldVal === 'tools') {
-    transitionName.value = 'slide-left'
-  }
+  // Slide in the direction of the tab that was chosen.
+  transitionName.value = TOOLBOX_TAB_ORDER.indexOf(newVal) < TOOLBOX_TAB_ORDER.indexOf(oldVal)
+    ? 'slide-right'
+    : 'slide-left'
 })
+
+/** Both quick-tool tabs list every result and note; only switch away from the reports tab. */
+function showQuickToolResults() {
+  if (toolboxMode.value === 'oneclick') toolboxMode.value = 'tools'
+  rightPanelCollapsed.value = false
+}
 
 
 const isResizing = ref(false)
@@ -1607,27 +1646,27 @@ function isPreCompactMessage(index: number): boolean {
 
 
 async function syncAllPendingMessageIds() {
-  console.log('🔄 [syncAllPendingMessageIds] 开始同步...')
+  console.log('🔄 [syncAllPendingMessageIds] starting sync...')
 
   if (!currentSession.value) {
-    console.log('⚠️ [syncAllPendingMessageIds] 没有当前会话，跳过')
+    console.log('⚠️ [syncAllPendingMessageIds] no current session, skipping')
     return
   }
 
 
   const pendingUsers = messages.value.filter(m => m.role === 'user' && (isTempMessageId(m.id) || m.pending_id_sync))
-  console.log(`🔍 [syncAllPendingMessageIds] 需要同步的 user 消息:`, pendingUsers.map(m => ({ id: m.id, pending: m.pending_id_sync })))
+  console.log(`🔍 [syncAllPendingMessageIds] user messages to sync:`, pendingUsers.map(m => ({ id: m.id, pending: m.pending_id_sync })))
 
   if (pendingUsers.length === 0) {
-    console.log('✅ [syncAllPendingMessageIds] 没有需要同步的消息，跳过')
+    console.log('✅ [syncAllPendingMessageIds] nothing to sync, skipping')
     return
   }
 
   try {
-    console.log('📡 [syncAllPendingMessageIds] 调用 brief 接口...')
+    console.log('📡 [syncAllPendingMessageIds] calling the brief endpoint...')
 
     const session = await getSession(currentSession.value.id, 20, 0, true)
-    console.log('📥 [syncAllPendingMessageIds] brief 接口返回:', session.messages?.length, '条消息')
+    console.log('📥 [syncAllPendingMessageIds] brief endpoint returned:', session.messages?.length, 'messages')
     const remoteMessages = session.messages || []
 
 
@@ -1640,12 +1679,12 @@ async function syncAllPendingMessageIds() {
       if (positionIndex >= 0 && positionIndex < remoteUsers.length) {
         const remote = remoteUsers[positionIndex]
         if (remote) {
-          console.log(`✅ [sync] 同步 user ID (位置 ${positionIndex + 1}): ${local.id} -> ${remote.id}`)
+          console.log(`✅ [sync] synced user ID (position ${positionIndex + 1}): ${local.id} -> ${remote.id}`)
           local.id = remote.id
           local.pending_id_sync = false
         }
       } else {
-        console.warn(`⚠️ [sync] 位置不匹配，本地位置: ${positionIndex}, 远程数量: ${remoteUsers.length}`)
+        console.warn(`⚠️ [sync] position mismatch, local position: ${positionIndex}, remote count: ${remoteUsers.length}`)
       }
     }
 
@@ -1667,10 +1706,10 @@ async function syncEditMessageIds() {
 }
 
 function stopStreaming() {
-  console.log('⏹️ [stopStreaming] 停止生成...')
+  console.log('⏹️ [stopStreaming] stopping generation...')
 
   if (!isStreaming.value) {
-    console.log('⚠️ [stopStreaming] 没有正在进行的流式生成，跳过')
+    console.log('⚠️ [stopStreaming] no streaming in progress, skipping')
     return
   }
 
@@ -1695,24 +1734,41 @@ function stopStreaming() {
       role: 'assistant',
       content_parts: [...streamingParts.value],
       created_at: new Date().toISOString(),
-      agent_role: agentRole.value,
+      agent_role: messageRoleForTurn(),
       pending_id_sync: true
     })
     pendingStopTempId.value = tempId
     pendingStopSessionId.value = currentSession.value.id
-    console.log('📝 [stopStreaming] 创建了临时 assistant 消息:', tempId)
+    console.log('📝 [stopStreaming] created a temporary assistant message:', tempId)
   }
 
   streamingParts.value = []
   isStreaming.value = false
 
 
-  console.log('🔄 [stopStreaming] 调用 syncPendingStopMessageIds...')
+  console.log('🔄 [stopStreaming] calling syncPendingStopMessageIds...')
   syncPendingStopMessageIds()
+}
+
+/** Sources the chat may use: the ready files ticked in the Sources panel. */
+const chatFileIds = computed(() => {
+  const selected = new Set(selectedFileIds.value)
+  return readyFiles.value.filter(file => selected.has(file.id)).map(file => file.id)
+})
+
+/** Nothing ticked in the Sources panel: the chat answers from general knowledge, without citations. */
+const isGeneralChat = computed(() => chatFileIds.value.length === 0)
+/** Captured when a turn starts, so changing the selection mid-answer does not relabel it. */
+const currentTurnGeneral = ref(false)
+
+function messageRoleForTurn(role?: string): Message['agent_role'] {
+  if (currentTurnGeneral.value) return 'general'
+  return (role as Message['agent_role']) || agentRole.value
 }
 
 async function sendMessage() {
   if (!inputMessage.value.trim() || !currentSession.value || isStreaming.value) return
+  currentTurnGeneral.value = isGeneralChat.value
 
   const sessionIdForTurn = currentSession.value.id
   const shouldGenerateTitleAfterSend = shouldGenerateTitleForCurrentTurn()
@@ -1765,7 +1821,7 @@ async function sendMessage() {
 
   startThinkingTimer()
 
-  const fileIds = selectedFileIds.value.length > 0 ? selectedFileIds.value : undefined
+  const fileIds = chatFileIds.value.length > 0 ? chatFileIds.value : undefined
   const titleFileNames = getSelectedSessionTitleFileNames()
 
   if (shouldGenerateTitleAfterSend) {
@@ -1880,7 +1936,7 @@ async function sendMessage() {
           role: 'assistant',
           content_parts: contentParts,
           created_at: new Date().toISOString(),
-          agent_role: doneData.agentRole || agentRole.value,
+          agent_role: messageRoleForTurn(doneData.agentRole),
           pending_id_sync: true
         })
         streamingParts.value = []
@@ -1933,7 +1989,7 @@ async function sendMessage() {
             if (msg.id && /^\d+$/.test(msg.id)) {
               msg.id = userMessageId
               msg.pending_id_sync = false
-              console.log(`✅ [sendMessage] 更新 user message ID: ${userMessageId}`)
+              console.log(`✅ [sendMessage] updated user message ID: ${userMessageId}`)
               break
             }
           }
@@ -1947,7 +2003,7 @@ async function sendMessage() {
             if (msg.id && /^\d+$/.test(msg.id)) {
               msg.id = assistantMessageId
               msg.pending_id_sync = false
-              console.log(`✅ [sendMessage] 更新 assistant message ID: ${assistantMessageId}`)
+              console.log(`✅ [sendMessage] updated assistant message ID: ${assistantMessageId}`)
               break
             }
           }
@@ -1966,7 +2022,8 @@ async function sendMessage() {
       }
     },
     webSearchConfigured.value,
-    agentRole.value
+    agentRole.value,
+    currentTurnGeneral.value
   )
 }
 
@@ -2013,9 +2070,43 @@ async function copyMessageAsText(msg: Message) {
     await copyTextToClipboard(plainText)
     showCopyToast(t('ui.copiedAsPlainText'))
   } catch (err) {
-    console.error('复制失败:', err)
+    console.error('Copy failed:', err)
     showCopyToast(t('ui.copyFailed'))
   }
+}
+
+/** A mind-map topic was chosen: ask about it in the current chat. */
+function handleAskInChat({ topic, context }: { topic: string; context: string }) {
+  // A mind-map topic is a question about the sources; it makes no sense as a general chat.
+  if (isGeneralChat.value) {
+    showToast(t('ui.mindMapNeedsSources'), 'warning', 4000)
+    return
+  }
+  if (isStreaming.value) {
+    showToast(t('ui.chatBusyTryLater'), 'warning')
+    return
+  }
+  inputMessage.value = context && context !== topic
+    ? t('ui.mindMapAskPromptWithContext', { topic, context })
+    : t('ui.mindMapAskPrompt', { topic })
+  void sendMessage()
+}
+
+async function handleSaveMessageAsNote(msg: Message) {
+  await saveMessageAsNote(msg)
+  // Notes live in the quick-tools results list; bring it into view.
+  showQuickToolResults()
+}
+
+async function confirmRegenerateFeature() {
+  const confirmed = await showConfirm({
+    title: t('ui.regenerateConfirmTitle'),
+    message: t('ui.regenerateConfirmMessage'),
+    type: 'warning',
+    confirmText: t('ui.regenerate'),
+    cancelText: t('ui.cancel'),
+  })
+  if (confirmed) await regenerateActiveFeature()
 }
 
 async function copyMessageAsMarkdown(msg: Message) {
@@ -2025,7 +2116,7 @@ async function copyMessageAsMarkdown(msg: Message) {
     await copyTextToClipboard(markdown)
     showCopyToast(t('ui.copiedAsMarkdown'))
   } catch (err) {
-    console.error('复制失败:', err)
+    console.error('Copy failed:', err)
     showCopyToast(t('ui.copyFailed'))
   }
 }
@@ -2035,7 +2126,7 @@ async function copyUserMessage(msg: Message) {
     await copyTextToClipboard(msg.content || '')
     showCopyToast(t('ui.copied2'))
   } catch (err) {
-    console.error('复制失败:', err)
+    console.error('Copy failed:', err)
     showCopyToast(t('ui.copyFailed'))
   }
 }
@@ -2083,6 +2174,7 @@ function cancelEditMessage() {
 
 async function submitEditMessage(msg: Message) {
   if (!editingContent.value.trim() || isStreaming.value || !currentSession.value) return
+  currentTurnGeneral.value = isGeneralChat.value
 
   const newContent = editingContent.value.trim()
   const messageIndex = messages.value.findIndex(m => m.id === msg.id)
@@ -2138,7 +2230,7 @@ async function submitEditMessage(msg: Message) {
     currentSession.value.id,
     targetMessage.id,
     newContent,
-    selectedFileIds.value.length > 0 ? selectedFileIds.value : undefined,
+    chatFileIds.value.length > 0 ? chatFileIds.value : undefined,
     {
       onContent: (content: string) => {
         clearLocalThinkingTimer()
@@ -2211,7 +2303,7 @@ async function submitEditMessage(msg: Message) {
           role: 'assistant',
           content_parts: contentParts,
           created_at: new Date().toISOString(),
-          agent_role: doneData.agentRole || agentRole.value,
+          agent_role: messageRoleForTurn(doneData.agentRole),
           pending_id_sync: true
         })
         pendingEditTempId.value = tempId
@@ -2229,7 +2321,7 @@ async function submitEditMessage(msg: Message) {
       },
       onError: (error: string, hasPartial?: boolean) => {
         clearLocalThinkingTimer()
-        console.error('编辑消息失败:', error)
+        console.error('Editing the message failed:', error)
 
         if (!hasPartial) {
           streamingParts.value = []
@@ -2267,7 +2359,7 @@ async function submitEditMessage(msg: Message) {
         if (targetMessage) {
           targetMessage.id = userMessageId
           targetMessage.pending_id_sync = false
-          console.log(`✅ [submitEditMessage] 更新被编辑的 user message ID: ${targetMessage.id} -> ${userMessageId}`)
+          console.log(`✅ [submitEditMessage] updated edited user message ID: ${targetMessage.id} -> ${userMessageId}`)
         }
 
         for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -2276,7 +2368,7 @@ async function submitEditMessage(msg: Message) {
             if (msg.id && /^\d+$/.test(msg.id)) {
               msg.id = assistantMessageId
               msg.pending_id_sync = false
-              console.log(`✅ [submitEditMessage] 更新 assistant message ID: ${assistantMessageId}`)
+              console.log(`✅ [submitEditMessage] updated assistant message ID: ${assistantMessageId}`)
               break
             }
           }
@@ -2295,7 +2387,8 @@ async function submitEditMessage(msg: Message) {
       }
     },
     webSearchConfigured.value,
-    agentRole.value
+    agentRole.value,
+    currentTurnGeneral.value
   )
 }
 
@@ -2322,6 +2415,7 @@ function shouldShowMessageActions(index: number): boolean {
 
 async function regenerateMessage(assistantIndex: number) {
   if (isStreaming.value || !currentSession.value) return
+  currentTurnGeneral.value = isGeneralChat.value
 
   let userMessage: Message | null = null
   let userIndex = -1
@@ -2334,7 +2428,7 @@ async function regenerateMessage(assistantIndex: number) {
   }
 
   if (!userMessage || userIndex < 0) {
-    console.error('找不到对应的用户消息')
+    console.error('Matching user message not found')
     return
   }
 
@@ -2371,12 +2465,12 @@ async function regenerateMessage(assistantIndex: number) {
 
   startStreamingTurn()
 
-  console.log(`📤 [regenerateMessage] 调用 API，user ID: ${userMessage.id}, 是否临时ID: ${isTempMessageId(userMessage.id)}`)
+  console.log(`📤 [regenerateMessage] calling the API, user ID: ${userMessage.id}, temporary ID: ${isTempMessageId(userMessage.id)}`)
   currentStreamAbort = editMessageAndRegenerate(
     currentSession.value.id,
     userMessage.id,
     userMessage.content || '',
-    selectedFileIds.value.length > 0 ? selectedFileIds.value : undefined,
+    chatFileIds.value.length > 0 ? chatFileIds.value : undefined,
     {
       onContent: (content: string) => {
         clearLocalThinkingTimer()
@@ -2445,7 +2539,7 @@ async function regenerateMessage(assistantIndex: number) {
           role: 'assistant',
           content_parts: contentParts,
           created_at: new Date().toISOString(),
-          agent_role: doneData.agentRole || agentRole.value,
+          agent_role: messageRoleForTurn(doneData.agentRole),
           pending_id_sync: true
         })
         streamingParts.value = []
@@ -2456,7 +2550,7 @@ async function regenerateMessage(assistantIndex: number) {
       },
       onError: (error: string, hasPartial?: boolean) => {
         clearLocalThinkingTimer()
-        console.error('重新生成失败:', error)
+        console.error('Regeneration failed:', error)
 
         if (!hasPartial) {
           streamingParts.value = []
@@ -2486,7 +2580,7 @@ async function regenerateMessage(assistantIndex: number) {
         if (userMessage) {
           userMessage.id = userMessageId
           userMessage.pending_id_sync = false
-          console.log(`✅ [regenerateMessage] 更新 user message ID: ${userMessageId}`)
+          console.log(`✅ [regenerateMessage] updated user message ID: ${userMessageId}`)
         }
 
         for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -2495,7 +2589,7 @@ async function regenerateMessage(assistantIndex: number) {
             if (msg.id && /^\d+$/.test(msg.id)) {
               msg.id = assistantMessageId
               msg.pending_id_sync = false
-              console.log(`✅ [regenerateMessage] 更新 assistant message ID: ${assistantMessageId}`)
+              console.log(`✅ [regenerateMessage] updated assistant message ID: ${assistantMessageId}`)
               break
             }
           }
@@ -2503,17 +2597,13 @@ async function regenerateMessage(assistantIndex: number) {
       }
     },
     webSearchConfigured.value,
-    agentRole.value
+    agentRole.value,
+    currentTurnGeneral.value
   )
 }
 
 function goBack() {
   router.push('/')
-}
-
-function logout() {
-  clearTokens()
-  router.push('/login')
 }
 
 function calculateTitleWidth(text: string): string {
@@ -2592,8 +2682,9 @@ function closeRenameModal() {
   renameModal.visible = false
 }
 
-async function handleRenameConfirm(newName: string) {
-  if (newName === renameModal.name) {
+async function handleRenameConfirm(rawName: string) {
+  const newName = rawName.trim()
+  if (!newName || newName === renameModal.name) {
     closeRenameModal()
     return
   }
@@ -2609,9 +2700,11 @@ async function handleRenameConfirm(newName: string) {
       await renameFeatureTitle(renameModal.id, newName)
     }
     closeRenameModal()
+    showToast(t('ui.renameSuccess'), 'success')
   } catch (error) {
     console.error('Failed to rename:', error)
     renameModal.saving = false
+    showToast(t('ui.renameFailed'), 'error')
   }
 }
 
@@ -2780,7 +2873,13 @@ async function handleWorkflowCitationClick(part: FeatureCitationRefPart, feature
   }
 }
 
+// Ticks every minute so relative times ("5 minutes ago") stay current while the page is open.
+const relativeTimeNow = ref(Date.now())
+const relativeTimeTimer = window.setInterval(() => { relativeTimeNow.value = Date.now() }, 60_000)
+onUnmounted(() => window.clearInterval(relativeTimeTimer))
+
 function formatTime(isoString: string): string {
+  void relativeTimeNow.value
   return formatRelativeTime(isoString)
 }
 
@@ -2811,8 +2910,11 @@ defineExpose({ titleInputRef })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
+  gap: 16px;
+  height: 56px;
+  padding: 0 16px;
   background: var(--bg-page);
+  flex-shrink: 0;
 }
 
 .header-left {
@@ -2827,19 +2929,14 @@ defineExpose({ titleInputRef })
   justify-content: center;
   background: transparent;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.15s;
 }
 
 .back-btn:hover {
   background: var(--bg-hover);
 }
 
-.back-logo {
-  height: 40px;
-  width: auto;
-}
 
 .project-title-wrapper {
   display: flex;
@@ -2847,13 +2944,17 @@ defineExpose({ titleInputRef })
 }
 
 .project-title {
-  font-size: 16px;
-  font-weight: 600;
+  max-width: min(52vw, 640px);
+  font-size: 20px;
+  font-weight: 400;
   color: var(--text-primary);
-  cursor: pointer;
-  padding: 4px 8px;
+  cursor: text;
+  padding: 4px 10px;
   margin: -4px -8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   transition: background 0.15s;
 }
 
@@ -2862,51 +2963,23 @@ defineExpose({ titleInputRef })
 }
 
 .project-title-input {
-  font-size: 16px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 400;
   color: var(--text-primary);
   background: var(--bg-white);
   border: 1px solid var(--primary-color);
-  border-radius: 6px;
-  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  padding: 3px 9px;
+  margin: -4px -8px;
   outline: none;
-  box-shadow: 0 0 0 3px var(--primary-light);
+  box-shadow: var(--focus-ring);
   transition: width 0.1s ease;
 }
 
-.btn-settings {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s;
-}
 
-.btn-settings:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
 
-.user-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  cursor: default;
-}
 
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 
 
 .project-main {
@@ -2914,7 +2987,7 @@ defineExpose({ titleInputRef })
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0 6px;
+  padding: 0 12px;
 }
 
 
@@ -2922,15 +2995,14 @@ defineExpose({ titleInputRef })
   flex: 1;
   display: flex;
   overflow: hidden;
-  gap: 2px;
-  border-radius: 16px;
+  gap: 0;
 }
 
 
 .project-footer {
   text-align: center;
-  padding: 2px 2px;
-  font-size: 11px;
+  padding: 6px 2px 8px;
+  font-size: 12px;
   color: var(--text-tertiary);
 }
 
@@ -2970,18 +3042,17 @@ defineExpose({ titleInputRef })
 
 
 .resizer {
-  width: 8px;
+  width: 12px;
   cursor: col-resize;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
-  transition: background 0.15s;
   flex-shrink: 0;
 }
 
 .resizer:hover {
-  background: var(--bg-hover);
+  background: transparent;
 }
 
 .resizer.hidden {
@@ -2989,16 +3060,17 @@ defineExpose({ titleInputRef })
 }
 
 .resizer-line {
-  width: 2px;
-  height: 40px;
-  background: var(--border-color);
-  border-radius: 1px;
-  transition: background 0.15s, height 0.15s;
+  width: 4px;
+  height: 32px;
+  background: transparent;
+  border-radius: 2px;
+  transition: background 0.15s, height 0.2s var(--ease-emphasized);
 }
 
-.resizer:hover .resizer-line {
-  background: var(--primary-color);
-  height: 60px;
+.resizer:hover .resizer-line,
+.project-page.resizing .resizer-line {
+  background: var(--border-strong);
+  height: 56px;
 }
 
 

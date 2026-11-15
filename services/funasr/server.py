@@ -17,11 +17,11 @@ Response format (POST /transcribe):
         "success": true,
         "duration": 180000,        # ms
         "speaker_count": 2,
-        "full_text": "完整文本...",
+        "full_text": "Full text...",
         "segments": [
             {
                 "speaker": 0,
-                "text": "你好",
+                "text": "Hello",
                 "start": 0,        # ms
                 "end": 1200        # ms
             }, ...
@@ -32,7 +32,15 @@ import logging
 import os
 import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_DATA_DIR = Path(os.getenv("LOCAL_NOTEBOOK_DATA_DIR", _PROJECT_ROOT / "local-notebook-data")).resolve()
+_MODELS_DIR = _DATA_DIR / "models"
+os.environ.setdefault("MODELSCOPE_CACHE", str(_MODELS_DIR / "modelscope"))
+os.environ.setdefault("HF_HOME", str(_MODELS_DIR / "huggingface"))
+os.environ.setdefault("TORCH_HOME", str(_MODELS_DIR / "torch"))
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware

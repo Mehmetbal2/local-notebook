@@ -20,11 +20,13 @@ export interface FileInfo {
   project_id: string
   file_name: string
   file_type: string
-  status: 'pending' | 'processing' | 'ready' | 'error' | 'failed'
+  status: 'pending' | 'processing' | 'ready' | 'error' | 'failed' | 'cancelled'
   error_message?: string
   processing_current?: number | null
   processing_total?: number | null
   processing_message?: string | null
+  /** Address a web-imported source was downloaded from */
+  source_url?: string | null
   storage_path: string
   created_at: string
   updated_at: string
@@ -151,7 +153,7 @@ export interface Message {
   tool_executing?: ToolExecuting[]
   tool_calls?: any
   created_at: string
-  agent_role?: 'default' | 'analysis'
+  agent_role?: 'default' | 'analysis' | 'general'
   _error?: string
   has_partial?: boolean
   pending_id_sync?: boolean
@@ -303,6 +305,8 @@ export interface FeatureTextBlock {
   content?: string
   extra?: {
     is_table?: boolean
+    /** Nesting level of a list item (0 = top level). */
+    indent?: number
   }
 }
 
@@ -320,6 +324,16 @@ export interface FeatureVideoBlock {
   asset: FeatureAsset | null
 }
 
+export interface FeatureAudioBlock {
+  block_type: 'audio'
+  asset_id?: string
+  caption: string | null
+  asset: {
+    url: string
+    mime_type?: string
+  } | null
+}
+
 export interface FeatureImageGroupBlock {
   block_type: 'image_group'
   asset_ids: string[]
@@ -327,8 +341,26 @@ export interface FeatureImageGroupBlock {
   assets: FeatureAsset[]
 }
 
-export type FeatureBlock = FeatureTextBlock | FeatureImageBlock | FeatureVideoBlock | FeatureImageGroupBlock
+export type FeatureBlock = FeatureTextBlock | FeatureImageBlock | FeatureVideoBlock | FeatureAudioBlock | FeatureImageGroupBlock
 
+
+/** A source a deep research read (kept with its report). */
+export interface ResearchSource {
+  n: number
+  sub: number
+  url: string
+  title: string
+  venue: string
+  domain: string
+  authors: string[]
+  year: string
+  doi: string
+  pdf_url: string
+  landing_url: string
+  full_text: boolean
+  chars: number
+  cited: boolean
+}
 
 export interface Feature {
   id: string
@@ -340,6 +372,11 @@ export interface Feature {
   blocks: FeatureBlock[]
   citations: Record<string, CitationMetadata>
   next_citation_display_num?: number
+  note_source?: 'chat' | 'manual' | null
+  note_markdown?: string | null
+  progress?: string | null
+  research_sources?: ResearchSource[] | null
+  research_scope?: 'web' | 'academic' | null
   created_at: string | null
   updated_at: string | null
   started_at: string | null

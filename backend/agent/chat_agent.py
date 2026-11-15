@@ -5,7 +5,7 @@ from typing import AsyncGenerator
 
 import config
 from agent.citation_parser import CitationParser
-from agent.prompts import CHAT_AGENT_SYSTEM_PROMPT
+from agent.prompts import CHAT_AGENT_SYSTEM_PROMPT, GENERAL_CHAT_SYSTEM_PROMPT
 from agent.tool_display import get_tool_display_info
 from agent.tools.query_knowledge_base import (
     CitationState,
@@ -26,6 +26,7 @@ from kosong.tooling import ToolResult
 from kosong.tooling.simple import SimpleToolset
 from services.llm_provider import create_llm_chat_provider
 from services.usage_service import record_model_usage
+from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger("chat_agent")
 
@@ -63,14 +64,15 @@ class ChatAgent:
         enable_web_search: bool = False,
         workflow_redis=None,
         output_language: str | None = None,
+        general_chat: bool = False,
     ) -> AsyncGenerator[dict, None]:
         api_key, base_url, model, api_format = await config.resolve_llm_provider_config()
 
         if not api_key:
-            yield {"type": "error", "message": "LLM API key 未配置，请前往「设置 → LLM」填写。"}
+            yield {"type": "error", "message": ui_msg("chat_llm_key_missing")}
             return
         if not model:
-            yield {"type": "error", "message": "LLM 模型未配置，请前往「设置 → LLM」填写。"}
+            yield {"type": "error", "message": ui_msg("chat_llm_model_missing")}
             return
 
         chat_provider = create_llm_chat_provider(
@@ -116,17 +118,17 @@ class ChatAgent:
             create_workflow_tool,
             get_workflow_tool,
         ]
+        system_prompt = self.system_prompt
+        if general_chat:
+            # No sources selected: no source tools and no tool launches, only (optional) web search.
+            tools = []
+            system_prompt = GENERAL_CHAT_SYSTEM_PROMPT
 
         if enable_web_search:
             from agent.tools.web_search import WebSearchTool
-            _, ws_key, ws_base_url = await config.resolve_web_search_config()
-            web_search_tool = WebSearchTool(
-                citation_state=self._citation_state,
-                api_key=ws_key or "",
-                base_url=ws_base_url or "",
-            )
+            web_search_tool = await WebSearchTool.create(self._citation_state)
             tools.append(web_search_tool)
-            logger.info(f"联网搜索工具已加入 (configured={bool(ws_key)})")
+            logger.info(f"web search tool added (searxng={web_search_tool.base_url})")
 
         toolset = SimpleToolset(tools)
 
@@ -151,7 +153,7 @@ class ChatAgent:
                 history = await self._load_history(session_id)
                 yield {"type": "compact_done"}
             except Exception as e:
-                logger.exception("[compact] 执行失败，继续使用截断历史")
+                logger.exception("[compact] failed, continuing with truncated history")
                 yield {"type": "compact_failed", "message": str(e)}
 
         history.append(Message(role="user", content=question))
@@ -196,7 +198,7 @@ class ChatAgent:
             step_task = asyncio.create_task(
                 kosong.step(
                     chat_provider=chat_provider,
-                    system_prompt=self.system_prompt,
+                    system_prompt=system_prompt,
                     toolset=current_toolset,
                     history=history,
                     on_message_part=on_message_part,
@@ -377,7 +379,7 @@ class ChatAgent:
             yield {"type": "done"}
             return
 
-        yield {"type": "error", "message": "问题较为复杂，已达到处理步骤上限。请尝试简化提问。"}
+        yield {"type": "error", "message": ui_msg("chat_step_limit")}
 
     async def _process_part(
         self,
@@ -422,6 +424,26 @@ class ChatAgent:
             return message
         return str(result)
 
+    def _advance_citation_numbering(self, citations: dict) -> None:
+        """Keep new citation keys and display numbers past every one already used in this session.
+
+        Sessions saved before the counters were persisted have counter 0 although their
+        history already uses citation_0..N; reusing those keys would point old answers at
+        new passages.
+        """
+        from services.citation_history import max_citation_index
+
+        highest_key = max_citation_index(citations.keys())
+        if highest_key + 1 > self._citation_state.citation_counter:
+            self._citation_state.citation_counter = highest_key + 1
+        highest_display = max(
+            (meta.get("display_num") for meta in citations.values()
+             if isinstance(meta, dict) and isinstance(meta.get("display_num"), int)),
+            default=0,
+        )
+        if highest_display + 1 > self._next_display_num:
+            self._next_display_num = highest_display + 1
+
     async def _load_history(self, session_id: str) -> list[Message]:
         from database import AsyncSessionLocal
         from models.message import Message as DBMessage
@@ -443,8 +465,9 @@ class ChatAgent:
                         snapshot = json.loads(session_obj.compact_citations_json)
                         if isinstance(snapshot, dict):
                             self._citation_state.citations_map.update(snapshot)
+                            self._advance_citation_numbering(snapshot)
                     except json.JSONDecodeError:
-                        logger.warning("[load_history] compact_citations_json 解析失败")
+                        logger.warning("[load_history] could not parse compact_citations_json")
 
                 messages.append(Message(
                     role="user",
@@ -505,6 +528,7 @@ class ChatAgent:
                             citations_data = json.loads(msg.citations)
                             if isinstance(citations_data, dict):
                                 self._citation_state.citations_map.update(citations_data)
+                                self._advance_citation_numbering(citations_data)
                         except json.JSONDecodeError:
                             pass
 
@@ -701,7 +725,7 @@ class ChatAgent:
             should = estimated > COMPACT_TOKEN_THRESHOLD
             if should:
                 logger.info(
-                    f"[compact] 触发: last_total={session_obj.last_total_tokens} "
+                    f"[compact] triggered: last_total={session_obj.last_total_tokens} "
                     f"+ new_estimate={estimated - session_obj.last_total_tokens} "
                     f"= {estimated} > {COMPACT_TOKEN_THRESHOLD}"
                 )
@@ -721,18 +745,18 @@ class ChatAgent:
         from sqlalchemy import select
 
         if len(history) < COMPACT_MIN_STEPS + 2:
-            logger.info("[compact] 历史消息太少，跳过")
+            logger.info("[compact] too few history messages, skipping")
             return
 
         boundary_idx = self._find_compact_boundary(history)
         if boundary_idx <= 2:
-            logger.info("[compact] 保留区域覆盖了几乎所有消息，跳过")
+            logger.info("[compact] the kept region covers almost all messages, skipping")
             return
 
         messages_to_compact = history[:boundary_idx]
         logger.info(
-            f"[compact] 压缩 {len(messages_to_compact)} 条消息，"
-            f"保留 {len(history) - boundary_idx} 条"
+            f"[compact] compacting {len(messages_to_compact)} messages, "
+            f"keeping {len(history) - boundary_idx}"
         )
 
         compact_text = self._format_messages_for_compact(messages_to_compact)
@@ -788,9 +812,9 @@ class ChatAgent:
                 summary_text += part
 
         if not summary_text.strip():
-            raise ValueError("LLM 返回了空摘要")
+            raise ValueError("LLM returned an empty summary")
 
-        logger.info(f"[compact] 摘要生成完成，长度={len(summary_text)}")
+        logger.info(f"[compact] summary generated, length={len(summary_text)}")
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(
@@ -808,7 +832,7 @@ class ChatAgent:
 
             if db_boundary_idx <= 0 or db_boundary_idx > len(db_messages):
                 raise ValueError(
-                    f"compact boundary 计算异常: db_boundary_idx={db_boundary_idx}, "
+                    f"compact boundary calculation error: db_boundary_idx={db_boundary_idx}, "
                     f"db_messages={len(db_messages)}, kept={kept_count}"
                 )
 
@@ -833,7 +857,7 @@ class ChatAgent:
             await db.commit()
 
         logger.info(
-            f"[compact] 已保存: boundary_msg={boundary_message_id}, "
+            f"[compact] saved: boundary_msg={boundary_message_id}, "
             f"trigger_msg={trigger_msg.id if trigger_msg else None}"
         )
 

@@ -159,7 +159,7 @@ class ToolError(ToolReturnValue):
     """Subclass of `ToolReturnValue` representing a failed tool call."""
 
     def __init__(
-        self, *, message: str, brief: str, output: str | ContentPart | list[ContentPart] = ""
+        self, *, message: str, brief: str = "", output: str | ContentPart | list[ContentPart] = ""
     ):
         super().__init__(
             is_error=True,

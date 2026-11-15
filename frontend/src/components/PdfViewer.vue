@@ -952,8 +952,8 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-secondary, #f5f5f5);
-  color: var(--text-tertiary, #999);
+  background: var(--bg-secondary, var(--bg-secondary));
+  color: var(--text-tertiary, var(--text-disabled));
   font-size: 13px;
 }
 
@@ -984,12 +984,12 @@ defineExpose({
 .page-divider-line {
   flex: 1;
   height: 1px;
-  background: var(--border-color, #e0e0e0);
+  background: var(--border-color, var(--border-color));
 }
 
 .page-divider-text {
   font-size: 12px;
-  color: var(--text-tertiary, #999);
+  color: var(--text-tertiary, var(--text-disabled));
   white-space: nowrap;
 }
 
@@ -1064,7 +1064,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   background: rgba(255, 255, 255, 0.8);
-  color: var(--text-tertiary, #999);
+  color: var(--text-tertiary, var(--text-disabled));
   font-size: 13px;
   pointer-events: none;
 }

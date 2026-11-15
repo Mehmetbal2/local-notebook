@@ -11,6 +11,8 @@ class ChatRequest(BaseModel):
     file_ids: list[str] = []
     enable_web_search: bool = False
     output_language: Optional[str] = None
+    # No sources selected: answer from the model's general knowledge, without citations.
+    general_chat: bool = False
 
 
 class EditMessageRequest(BaseModel):
@@ -19,6 +21,7 @@ class EditMessageRequest(BaseModel):
     enable_web_search: bool = False
     agent_role: str = "default"
     output_language: Optional[str] = None
+    general_chat: bool = False
 
 
 class CitationItem(BaseModel):

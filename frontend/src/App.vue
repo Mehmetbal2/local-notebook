@@ -3,7 +3,7 @@
   
   <Teleport to="body">
     <Transition name="toast-fade">
-      <div v-if="globalToast.visible" class="global-toast" :class="globalToast.type">
+      <div v-if="globalToast.visible" class="global-toast" :class="globalToast.type" role="status" aria-live="polite">
         {{ globalToast.message }}
       </div>
     </Transition>
@@ -55,46 +55,56 @@ onUnmounted(() => {
 </script>
 
 <style>
-
 .global-toast {
   position: fixed;
   top: 20px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 12px 24px;
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 12px 20px 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-inverse);
+  color: var(--text-on-inverse);
   font-size: 14px;
-  color: #fff;
+  line-height: 1.4;
   z-index: 10000;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   pointer-events: none;
 }
 
-.global-toast.warning {
-  background: rgba(245, 158, 11, 0.9);
+.global-toast::before {
+  content: '';
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8ab4f8;
 }
 
-.global-toast.error {
-  background: rgba(239, 68, 68, 0.9);
+.global-toast.warning::before {
+  background: #fdd663;
 }
 
-.global-toast.success {
-  background: rgba(34, 197, 94, 0.9);
+.global-toast.error::before {
+  background: #f28b82;
 }
 
-.global-toast.info {
-  background: rgba(59, 130, 246, 0.9);
+.global-toast.success::before {
+  background: #81c995;
 }
-
 
 .toast-fade-enter-active,
 .toast-fade-leave-active {
-  transition: all 0.3s ease;
+  transition: opacity var(--duration-base) var(--ease-standard),
+    transform var(--duration-slow) var(--ease-emphasized);
 }
 
 .toast-fade-enter-from,
 .toast-fade-leave-to {
   opacity: 0;
-  transform: translateX(-50%) translateY(-20px);
+  transform: translateX(-50%) translateY(-16px);
 }
 </style>

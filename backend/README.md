@@ -10,7 +10,7 @@ FastAPI service that exposes REST + SSE APIs and runs an embedded ARQ background
 |---|---|
 | [routes/](./routes) | API route layer: `auth` / `project` / `file` / `session` / `chat` / `settings` |
 | [agent/](./agent) | Chat core: `chat_agent` as the main agent, `citation_parser` for block-level citations, prompts, and callable agent tools |
-| [services/](./services) | Domain services: `embedding_service` / `vector_service` for standalone Milvus / `mineru_client` for PDFs / `segment_service` / `summary_service` / `vlm_client` / `export_service` |
+| [services/](./services) | Domain services: `embedding_service` / `vector_service` for standalone Milvus / `ocr_client` for scanned PDFs / `segment_service` / `summary_service` / `vlm_client` / `export_service` |
 | [models/](./models) | SQLAlchemy ORM models: `project` / `file` / `segment` / `block` / `session` / `message` / `image` / `settings` |
 | [workers/](./workers) | ARQ background tasks for async file parsing, chunking, and vectorization after upload |
 | [packages/kosong/](./packages/kosong) | Built-in agent reasoning framework for LLM providers, tool calling, and streaming |
@@ -86,5 +86,5 @@ curl http://localhost:8000/health/redis
 ## Data Flow
 
 1. **File upload** -> `routes/file_routes.py` writes to `UPLOAD_DIR` -> job is queued in ARQ.
-2. **Background parsing** -> `workers/parsers/` calls MinerU for PDFs or FunASR for audio -> chunks with `segment_service` -> vectorizes with `embedding_service` -> writes vectors into shared Milvus collections with `vector_service`.
+2. **Background parsing** -> `workers/parsers/` parses PDFs locally with PyMuPDF or through the OCR service, and audio with FunASR -> chunks with `segment_service` -> vectorizes with `embedding_service` -> writes vectors into shared Milvus collections with `vector_service`.
 3. **Chat** -> `routes/chat_routes.py` streams SSE -> `agent/chat_agent.py` reasons -> `agent/citation_parser.py` parses citations -> the frontend receives streamed output.

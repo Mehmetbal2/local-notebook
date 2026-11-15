@@ -11,25 +11,7 @@
         </button>
         <h1 class="settings-title">{{ $t('ui.settings') }}</h1>
       </div>
-      <div class="settings-header-right">
-        <LanguageSwitcher />
-        <button class="btn-header-icon" @click="router.push('/admin')" :title="$t('ui.userManagement')">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zM8 11c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" />
-          </svg>
-        </button>
-        <span class="user-badge">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-          </svg>
-          <span>{{ displayUsername }}</span>
-        </span>
-        <button class="btn-header-icon" @click="logout" :title="$t('ui.logOut')">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3h-8v2h8v14h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
-          </svg>
-        </button>
-      </div>
+      <AppHeaderActions current="settings" />
     </header>
 
     <div class="settings-layout">
@@ -60,21 +42,6 @@
             </div>
 
             <div class="overview-grid">
-
-              <div class="overview-card" @click="activeTab = 'bailian'">
-                <div class="overview-card-header">
-                  <span class="overview-card-title">{{ $t('ui.bailianApiKey') }}</span>
-                  <span class="overview-badge" :class="saved.bailian_api_key ? 'configured' : 'unconfigured'">
-                    {{ saved.bailian_api_key ? $t('ui.configured') : $t('ui.notConfigured') }}
-                  </span>
-                </div>
-                <p class="overview-card-detail" v-if="saved.bailian_api_key">
-                  {{ saved.bailian_api_key.slice(0, 8) }}...
-                </p>
-                <p class="overview-card-detail muted" v-else>{{ $t('ui.clickToConfigure') }}</p>
-              </div>
-
-
               <div class="overview-card" @click="activeTab = 'llm'">
                 <div class="overview-card-header">
                   <span class="overview-card-title">{{ $t('ui.llm') }}</span>
@@ -83,9 +50,8 @@
                   </span>
                 </div>
                 <p class="overview-card-detail">
-                  {{ saved.llm_source === 'custom' ? $t('ui.custom') : $t('ui.bailian') }}
-                  · {{ saved.llm_source === 'custom' ? (saved.llm_model || $t('ui.modelNotSet')) : (saved.llm_bailian_model || $t('ui.modelNotSet')) }}
-                  <template v-if="saved.llm_source === 'custom'">· {{ apiFormatLabel(saved.llm_api_format) }}</template>
+                  {{ saved.llm_model || $t('ui.modelNotSet') }}
+                  · {{ apiFormatLabel(saved.llm_api_format) }}
                 </p>
               </div>
 
@@ -98,8 +64,7 @@
                   </span>
                 </div>
                 <p class="overview-card-detail">
-                  {{ saved.vlm_source === 'custom' ? $t('ui.custom') : $t('ui.bailian') }}
-                  · {{ saved.vlm_source === 'custom' ? (saved.vlm_model || $t('ui.modelNotSet')) : (saved.vlm_bailian_model || $t('ui.modelNotSet')) }}
+                  {{ saved.vlm_model || $t('ui.modelNotSet') }}
                 </p>
               </div>
 
@@ -112,24 +77,22 @@
                   </span>
                 </div>
                 <p class="overview-card-detail">
-                  {{ saved.embedding_source === 'local' ? $t('ui.localService') : $t('ui.bailian') }}
+                  {{ saved.embedding_source === 'local' ? $t('ui.localService') : $t('ui.custom') }}
                   <template v-if="saved.embedding_source === 'local'">· {{ saved.embedding_base_url || $t('ui.urlNotSet') }}</template>
-                  <template v-else>· {{ saved.embedding_bailian_model || $t('ui.modelNotSet') }}</template>
+                  <template v-else>· {{ saved.embedding_model || $t('ui.modelNotSet') }}</template>
                 </p>
               </div>
 
 
-              <div class="overview-card" @click="activeTab = 'mineru'">
+              <div class="overview-card" @click="activeTab = 'pdf'">
                 <div class="overview-card-header">
-                  <span class="overview-card-title">{{ $t('ui.mineruPdfParsing') }}</span>
-                  <span class="overview-badge" :class="overviewMineruReady ? 'configured' : 'unconfigured'">
-                    {{ overviewMineruReady ? $t('ui.configured') : $t('ui.notConfigured') }}
+                  <span class="overview-card-title">{{ $t('ui.pdfParsing') }}</span>
+                  <span class="overview-badge" :class="overviewPdfReady ? 'configured' : 'unconfigured'">
+                    {{ overviewPdfReady ? $t('ui.configured') : $t('ui.notConfigured') }}
                   </span>
                 </div>
                 <p class="overview-card-detail">
-                  {{ saved.mineru_source === 'local' ? $t('ui.localService') : $t('ui.officialApi') }}
-                  <template v-if="saved.mineru_source === 'local'">· {{ saved.mineru_base_url || $t('ui.urlNotSet') }}</template>
-                  <template v-else>· {{ saved.mineru_api_key ? $t('ui.keyEntered') : $t('ui.keyNotConfigured') }}</template>
+                  {{ pdfEngineSummary }}<template v-if="saved.ocr_model"> · {{ saved.ocr_model }}</template>
                 </p>
               </div>
 
@@ -142,7 +105,20 @@
                   </span>
                 </div>
                 <p class="overview-card-detail">
-                  {{ $t('ui.localService') }} · {{ saved.funasr_base_url || $t('ui.urlNotSet') }}
+                  {{ saved.funasr_model || $t('ui.modelNotSet') }}
+                </p>
+              </div>
+
+
+              <div class="overview-card" @click="activeTab = 'funasr'">
+                <div class="overview-card-header">
+                  <span class="overview-card-title">{{ $t('ui.ttsSpeechSynthesis') }}</span>
+                  <span class="overview-badge" :class="overviewTtsReady ? 'configured' : 'unconfigured'">
+                    {{ overviewTtsReady ? $t('ui.configured') : $t('ui.notConfigured') }}
+                  </span>
+                </div>
+                <p class="overview-card-detail">
+                  {{ saved.tts_model ? `${saved.tts_model} · ${saved.tts_voice || 'deniz'}` : $t('ui.modelNotSet') }}
                 </p>
               </div>
 
@@ -150,48 +126,12 @@
               <div class="overview-card" @click="activeTab = 'websearch'">
                 <div class="overview-card-header">
                   <span class="overview-card-title">{{ $t('ui.webSearch') }}</span>
-                  <span class="overview-badge" :class="saved.bocha_api_key ? 'configured' : 'unconfigured'">
-                    {{ saved.bocha_api_key ? $t('ui.configured') : $t('ui.notConfigured') }}
+                  <span class="overview-badge" :class="overviewWebSearchReady ? 'configured' : 'unconfigured'">
+                    {{ overviewWebSearchReady ? $t('ui.configured') : $t('ui.notConfigured') }}
                   </span>
                 </div>
-                <p class="overview-card-detail">{{ $t('ui.bochaApi') }}</p>
+                <p class="overview-card-detail">SearXNG · {{ saved.searxng_base_url || 'http://127.0.0.1:8888' }}</p>
               </div>
-            </div>
-          </section>
-
-
-          <section v-if="activeTab === 'bailian'" class="settings-section">
-            <div class="section-header">
-              <h2>{{ $t('ui.alibabaCloudBailian') }}</h2>
-              <p class="section-desc">
-                {{ $t('ui.enterYourAlibabaCloudBailianApiKeyAs') }}
-                <a href="https://bailian.console.aliyun.com/" target="_blank">{{ $t('ui.openBailianConsole') }}</a>
-              </p>
-            </div>
-
-            <div class="form-group">
-              <label>{{ $t('ui.bailianApiKey') }}</label>
-              <div class="input-row">
-                <input
-                  :type="showBailianKey ? 'text' : 'password'"
-                  v-model="draft.bailian_api_key"
-                  placeholder="sk-..."
-                  class="input"
-                />
-                <button class="btn-icon" @click="showBailianKey = !showBailianKey" :title="$t('ui.showHide')">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                    <path v-if="showBailianKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                    <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
-                  </svg>
-                </button>
-              </div>
-              <p class="field-hint">{{ $t('ui.thisKeyIsUsedAsTheDefaultCredential') }}</p>
-            </div>
-
-            <div class="form-actions">
-              <button class="btn-save" @click="save('bailian')" :disabled="saving">
-                {{ saving ? $t('ui.saving') : $t('ui.save') }}
-              </button>
             </div>
           </section>
 
@@ -204,82 +144,56 @@
             </div>
 
             <div class="form-group">
+              <label>API Key</label>
+              <div class="input-row">
+                <input
+                  :type="showLlmKey ? 'text' : 'password'"
+                  v-model="draft.llm_api_key"
+                  placeholder="sk-..."
+                  class="input"
+                />
+                <button class="btn-icon" @click="showLlmKey = !showLlmKey" :title="$t('ui.showHide')">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path v-if="showLlmKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                    <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="label-row">
+                <label>Base URL</label>
+                <BaseUrlHelpTooltip />
+              </div>
+              <input
+                v-model="draft.llm_base_url"
+                :placeholder="draft.llm_api_format === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'"
+                class="input"
+              />
+              <p class="field-hint">
+                Endpoint: <code>{{ resolvedLlmEndpointPreview }}</code>
+              </p>
+            </div>
+
+            <div class="form-group">
+              <label>{{ $t('ui.requestFormat') }}</label>
               <div class="radio-group">
                 <label class="radio-item">
-                  <input type="radio" v-model="draft.llm_source" value="bailian" />
-                  <span>{{ $t('ui.useBailianModel') }}</span>
+                  <input type="radio" v-model="draft.llm_api_format" value="openai" />
+                  <span>OpenAI Chat Completions</span>
                 </label>
                 <label class="radio-item">
-                  <input type="radio" v-model="draft.llm_source" value="custom" />
-                  <span>{{ $t('ui.customOpenaiAnthropicDeepseekOllamaCompatibleApi') }}</span>
+                  <input type="radio" v-model="draft.llm_api_format" value="anthropic" />
+                  <span>Anthropic Messages</span>
                 </label>
               </div>
             </div>
 
-
-            <template v-if="draft.llm_source === 'bailian'">
-              <div class="form-group">
-                <label>{{ $t('ui.modelName') }}</label>
-                <input
-                  v-model="draft.llm_bailian_model"
-                  :placeholder="$t('ui.exampleQwenMax')"
-                  class="input"
-                />
-                <p class="field-hint">{{ $t('ui.enterAModelNameSupportedByBailianMake') }}</p>
-              </div>
-            </template>
-
-
-            <template v-if="draft.llm_source === 'custom'">
-              <div class="form-group">
-                <label>API Key</label>
-                <div class="input-row">
-                  <input
-                    :type="showLlmKey ? 'text' : 'password'"
-                    v-model="draft.llm_api_key"
-                    placeholder="sk-..."
-                    class="input"
-                  />
-                  <button class="btn-icon" @click="showLlmKey = !showLlmKey" :title="$t('ui.showHide')">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                      <path v-if="showLlmKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                      <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <div class="label-row">
-                  <label>Base URL</label>
-                  <BaseUrlHelpTooltip />
-                </div>
-                <input
-                  v-model="draft.llm_base_url"
-                  :placeholder="draft.llm_api_format === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'"
-                  class="input"
-                />
-              </div>
-
-              <div class="form-group">
-                <label>{{ $t('ui.requestFormat') }}</label>
-                <div class="radio-group">
-                  <label class="radio-item">
-                    <input type="radio" v-model="draft.llm_api_format" value="openai" />
-                    <span>OpenAI Chat Completions</span>
-                  </label>
-                  <label class="radio-item">
-                    <input type="radio" v-model="draft.llm_api_format" value="anthropic" />
-                    <span>Anthropic Messages</span>
-                  </label>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label>{{ $t('ui.modelName') }}</label>
-                <input v-model="draft.llm_model" :placeholder="$t('ui.exampleDeepseekChatKimiGpt4o')" class="input" />
-              </div>
-            </template>
+            <div class="form-group">
+              <label>{{ $t('ui.modelName') }}</label>
+              <input v-model="draft.llm_model" :placeholder="$t('ui.exampleDeepseekChatKimiGpt4o')" class="input" />
+            </div>
 
             <div class="form-actions">
               <button class="btn-test" @click="testLlm" :disabled="testing.llm">
@@ -341,61 +255,32 @@
             </div>
 
             <div class="form-group">
-              <div class="radio-group">
-                <label class="radio-item">
-                  <input type="radio" v-model="draft.vlm_source" value="bailian" />
-                  <span>{{ $t('ui.useBailianModel') }}</span>
-                </label>
-                <label class="radio-item">
-                  <input type="radio" v-model="draft.vlm_source" value="custom" />
-                  <span>{{ $t('ui.customOpenaiCompatibleApi') }}</span>
-                </label>
+              <label>API Key</label>
+              <div class="input-row">
+                <input
+                  :type="showVlmKey ? 'text' : 'password'"
+                  v-model="draft.vlm_api_key"
+                  placeholder="sk-..."
+                  class="input"
+                />
+                <button class="btn-icon" @click="showVlmKey = !showVlmKey" :title="$t('ui.showHide')">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path v-if="showVlmKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                    <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+                  </svg>
+                </button>
               </div>
             </div>
 
+            <div class="form-group">
+              <label>Base URL <span class="optional">{{ $t('ui.optional') }}</span></label>
+              <input v-model="draft.vlm_base_url" placeholder="https://api.openai.com/v1" class="input" />
+            </div>
 
-            <template v-if="draft.vlm_source === 'bailian'">
-              <div class="form-group">
-                <label>{{ $t('ui.modelName') }}</label>
-                <input
-                  v-model="draft.vlm_bailian_model"
-                  :placeholder="$t('ui.exampleQwenVl')"
-                  class="input"
-                />
-                <p class="field-hint">{{ $t('ui.enterAMultimodalModelNameSupportedByBailian') }}</p>
-              </div>
-            </template>
-
-
-            <template v-if="draft.vlm_source === 'custom'">
-              <div class="form-group">
-                <label>API Key</label>
-                <div class="input-row">
-                  <input
-                    :type="showVlmKey ? 'text' : 'password'"
-                    v-model="draft.vlm_api_key"
-                    placeholder="sk-..."
-                    class="input"
-                  />
-                  <button class="btn-icon" @click="showVlmKey = !showVlmKey" :title="$t('ui.showHide')">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                      <path v-if="showVlmKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                      <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label>Base URL <span class="optional">{{ $t('ui.optional') }}</span></label>
-                <input v-model="draft.vlm_base_url" placeholder="https://api.openai.com/v1" class="input" />
-              </div>
-
-              <div class="form-group">
-                <label>{{ $t('ui.modelName') }}</label>
-                <input v-model="draft.vlm_model" placeholder="gpt-4o" class="input" />
-              </div>
-            </template>
+            <div class="form-group">
+              <label>{{ $t('ui.modelName') }}</label>
+              <input v-model="draft.vlm_model" placeholder="gpt-4o" class="input" />
+            </div>
 
             <div class="form-actions">
               <button class="btn-test" @click="testVlm" :disabled="testing.vlm">
@@ -430,26 +315,45 @@
             <div class="form-group">
               <div class="radio-group">
                 <label class="radio-item">
-                  <input type="radio" v-model="draft.embedding_source" value="bailian" />
-                  <span>{{ $t('ui.useBailianModelCloudServiceMakeSureYour') }}</span>
-                </label>
-                <label class="radio-item">
                   <input type="radio" v-model="draft.embedding_source" value="local" />
                   <span>{{ $t('ui.localServiceSentenceTransformersGpuRequired') }}</span>
+                </label>
+                <label class="radio-item">
+                  <input type="radio" v-model="draft.embedding_source" value="custom" />
+                  <span>{{ $t('ui.customOpenaiCompatibleApi') }}</span>
                 </label>
               </div>
             </div>
 
 
-            <template v-if="draft.embedding_source === 'bailian'">
+            <template v-if="draft.embedding_source === 'custom'">
+              <div class="form-group">
+                <label>API Key</label>
+                <input
+                  type="password"
+                  v-model="draft.embedding_api_key"
+                  placeholder="sk-..."
+                  class="input"
+                />
+              </div>
+              <div class="form-group">
+                <label>Base URL</label>
+                <input
+                  v-model="draft.embedding_base_url"
+                  placeholder="https://api.openai.com/v1"
+                  class="input"
+                />
+                <p class="field-hint">
+                  Endpoint: <code>{{ (draft.embedding_base_url || 'https://api.openai.com/v1').replace(/\/+$/, '').replace(/\/embeddings$/, '') + '/embeddings' }}</code>
+                </p>
+              </div>
               <div class="form-group">
                 <label>{{ $t('ui.modelName') }}</label>
                 <input
-                  v-model="draft.embedding_bailian_model"
-                  :placeholder="$t('ui.exampleTextEmbedding')"
+                  v-model="draft.embedding_model"
+                  placeholder="text-embedding-3-small"
                   class="input"
                 />
-                <p class="field-hint">{{ $t('ui.bailianEmbeddingModelTextEmbeddingV4IsRecommended') }}</p>
               </div>
             </template>
 
@@ -484,9 +388,9 @@
           </section>
 
 
-          <section v-if="activeTab === 'mineru'" class="settings-section">
+          <section v-if="activeTab === 'pdf'" class="settings-section">
             <div class="section-header">
-              <h2>{{ $t('ui.mineruPdfParsing') }}</h2>
+              <h2>{{ $t('ui.pdfParsingSection') }}</h2>
             </div>
 
             <div class="warning-banner">
@@ -495,67 +399,77 @@
               </svg>
               <div>
                 <strong>{{ $t('ui.configureAPdfParsingServiceBeforeUploadingPdf') }}</strong>
-                <p>{{ $t('ui.thisSystemUsesMineruForLayoutAwareParsing') }}</p>
+                <p>{{ $t('ui.pdfParsingBannerText') }}</p>
               </div>
             </div>
 
             <div class="form-group">
+              <label>{{ $t('ui.pdfEngine') }}</label>
               <div class="radio-group">
-                <label class="radio-item">
-                  <input type="radio" v-model="draft.mineru_source" value="api" />
-                  <span>{{ $t('ui.officialApi') }} (<a href="https://mineru.net" target="_blank">mineru.net</a>)</span>
+                <label class="radio-item radio-item--stacked">
+                  <input type="radio" v-model="draft.pdf_engine" value="auto" />
+                  <span>{{ $t('ui.pdfEngineAuto') }}<small class="radio-hint">{{ $t('ui.pdfEngineAutoHint') }}</small></span>
                 </label>
-                <label class="radio-item">
-                  <input type="radio" v-model="draft.mineru_source" value="local" />
-                  <span>{{ $t('ui.localServiceSelfHostedMineru') }}</span>
+                <label class="radio-item radio-item--stacked">
+                  <input type="radio" v-model="draft.pdf_engine" value="local" />
+                  <span>{{ $t('ui.pdfEngineLocal') }}<small class="radio-hint">{{ $t('ui.pdfEngineLocalHint') }}</small></span>
+                </label>
+                <label class="radio-item radio-item--stacked">
+                  <input type="radio" v-model="draft.pdf_engine" value="ocr" />
+                  <span>{{ $t('ui.pdfEngineOcr') }}<small class="radio-hint">{{ $t('ui.pdfEngineOcrHint') }}</small></span>
                 </label>
               </div>
             </div>
 
-            <template v-if="draft.mineru_source === 'api'">
-              <div class="form-group">
-                <label>API Key</label>
-                <div class="input-row">
-                  <input
-                    :type="showMineruKey ? 'text' : 'password'"
-                    v-model="draft.mineru_api_key"
-                    placeholder="your-mineru-api-key"
-                    class="input"
-                  />
-                  <button class="btn-icon" @click="showMineruKey = !showMineruKey" :title="$t('ui.showHide')">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                      <path v-if="showMineruKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                      <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </template>
+            <h3 class="subsection-title">{{ $t('ui.ocrServiceOptional') }}</h3>
 
-            <template v-if="draft.mineru_source === 'local'">
-              <div class="form-group">
-                <label>{{ $t('ui.serviceUrl') }}</label>
+            <div class="form-group">
+              <label>API Key</label>
+              <div class="input-row">
                 <input
-                  v-model="draft.mineru_base_url"
-                  :placeholder="$t('ui.exampleLocalMineruUrl')"
+                  :type="showOcrKey ? 'text' : 'password'"
+                  v-model="draft.ocr_api_key"
+                  placeholder="sk-..."
                   class="input"
                 />
-                <p class="field-hint">
-                  {{ $t('ui.localMineruServiceUrlStartItWith') }}<code>cd services/mineru && python server.py</code>
-                  {{ $t('ui.doNotUseLocalhostInDockerDeploymentsInside') }}
-                  {{ $t('ui.macWindowsUseHostDockerInternalLinuxUseLanIp') }}
-                </p>
+                <button class="btn-icon" @click="showOcrKey = !showOcrKey" :title="$t('ui.showHide')">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path v-if="showOcrKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                    <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+                  </svg>
+                </button>
               </div>
-            </template>
+            </div>
+
+            <div class="form-group">
+              <label>Base URL</label>
+              <input
+                v-model="draft.ocr_base_url"
+                placeholder="https://api.openai.com/v1"
+                class="input"
+              />
+              <p class="field-hint">
+                Endpoint: <code>{{ resolvedOcrEndpointPreview }}</code>
+              </p>
+            </div>
+
+            <div class="form-group">
+              <label>{{ $t('ui.modelName') }}</label>
+              <input
+                v-model="draft.ocr_model"
+                placeholder="deepseek-ocr-2, dots-ocr"
+                class="input"
+              />
+            </div>
 
             <div class="form-actions">
-              <button class="btn-test" @click="testMineru" :disabled="testing.mineru">
-                {{ testing.mineru ? $t('ui.testing') : $t('ui.testConnection') }}
+              <button class="btn-test" @click="testOcr" :disabled="testing.ocr">
+                {{ testing.ocr ? $t('ui.testing') : $t('ui.testConnection') }}
               </button>
-              <span v-if="testResult.mineru" class="test-result" :class="testResult.mineru.ok ? 'ok' : 'fail'">
-                {{ testResult.mineru.msg }}
+              <span v-if="testResult.ocr" class="test-result" :class="testResult.ocr.ok ? 'ok' : 'fail'">
+                {{ testResult.ocr.msg }}
               </span>
-              <button class="btn-save" @click="save('mineru')" :disabled="saving">
+              <button class="btn-save" @click="save('pdf')" :disabled="saving">
                 {{ saving ? $t('ui.saving') : $t('ui.save') }}
               </button>
             </div>
@@ -569,18 +483,43 @@
             </div>
 
             <div class="form-group">
-              <label>{{ $t('ui.serviceUrl') }}</label>
+              <label>API Key</label>
+              <div class="input-row">
+                <input
+                  :type="showFunasrKey ? 'text' : 'password'"
+                  v-model="draft.funasr_api_key"
+                  placeholder="sk-..."
+                  class="input"
+                />
+                <button class="btn-icon" @click="showFunasrKey = !showFunasrKey" :title="$t('ui.showHide')">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path v-if="showFunasrKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                    <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Base URL</label>
               <input
                 type="text"
                 v-model="draft.funasr_base_url"
-                placeholder="http://127.0.0.1:8003"
+                placeholder="https://api.openai.com/v1"
                 class="input"
               />
               <p class="field-hint">
-                {{ $t('ui.localFunasrServiceUrlStartItWith') }}<code>cd services/funasr && python server.py</code>
-                {{ $t('ui.doNotUseLocalhostInDockerDeploymentsInside') }}
-                {{ $t('ui.macWindowsUseHostDockerInternalLinuxUseLanIp') }}
+                Endpoint: <code>{{ resolvedAsrEndpointPreview }}</code>
               </p>
+            </div>
+
+            <div class="form-group">
+              <label>{{ $t('ui.modelName') }}</label>
+              <input
+                v-model="draft.funasr_model"
+                placeholder="qwen3-asr-1.7b, whisper-1"
+                class="input"
+              />
             </div>
 
             <div class="form-actions">
@@ -594,35 +533,88 @@
                 {{ saving ? $t('ui.saving') : $t('ui.save') }}
               </button>
             </div>
+
+            <hr class="section-divider" />
+
+            <div class="section-header">
+              <h2>{{ $t('ui.ttsSpeechSynthesis') }}</h2>
+              <p class="section-desc">{{ $t('ui.convertTextIntoNaturalSpeechWithCustomApi') }}</p>
+            </div>
+
+            <div class="form-group">
+              <label>API Key</label>
+              <div class="input-row">
+                <input
+                  :type="showTtsKey ? 'text' : 'password'"
+                  v-model="draft.tts_api_key"
+                  placeholder="sk-..."
+                  class="input"
+                />
+                <button class="btn-icon" @click="showTtsKey = !showTtsKey" :title="$t('ui.showHide')">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path v-if="showTtsKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                    <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Base URL</label>
+              <input
+                type="text"
+                v-model="draft.tts_base_url"
+                placeholder="https://api.openai.com/v1"
+                class="input"
+              />
+              <p class="field-hint">
+                Endpoint: <code>{{ resolvedTtsEndpointPreview }}</code>
+              </p>
+            </div>
+
+            <div class="form-group">
+              <label>{{ $t('ui.modelName') }}</label>
+              <input
+                v-model="draft.tts_model"
+                placeholder="voxcpm2, tts-1"
+                class="input"
+              />
+            </div>
+
+            <div class="form-group">
+              <label>{{ $t('ui.voiceName') }}</label>
+              <input
+                v-model="draft.tts_voice"
+                placeholder="deniz, ece, emre, kaan"
+                class="input"
+              />
+              <p class="field-hint">{{ $t('ui.voiceNameHint') }}</p>
+            </div>
+
+            <div class="form-actions">
+              <button class="btn-test" @click="testTts" :disabled="testing.tts">
+                {{ testing.tts ? $t('ui.testing') : $t('ui.testConnection') }}
+              </button>
+              <span v-if="testResult.tts" class="test-result" :class="testResult.tts.ok ? 'ok' : 'fail'">
+                {{ testResult.tts.msg }}
+              </span>
+              <button class="btn-save" @click="save('tts')" :disabled="saving">
+                {{ saving ? $t('ui.saving') : $t('ui.save') }}
+              </button>
+            </div>
           </section>
 
 
           <section v-if="activeTab === 'websearch'" class="settings-section">
             <div class="section-header">
               <h2>{{ $t('ui.webSearch') }}</h2>
-              <p class="section-desc">
-                {{ $t('ui.configureABochaApiKeyToEnableWeb') }}
-                <a href="https://open.bochaai.com/" target="_blank">{{ $t('ui.openBochaConsole') }}</a>
-              </p>
+              <p class="section-desc">{{ $t('ui.webSearchSectionDesc') }}</p>
             </div>
 
             <div class="form-group">
-              <label>{{ $t('ui.bochaApiKey') }}</label>
-              <div class="input-row">
-                <input
-                  :type="showBochaKey ? 'text' : 'password'"
-                  v-model="draft.bocha_api_key"
-                  placeholder="sk-..."
-                  class="input"
-                />
-                <button class="btn-icon" @click="showBochaKey = !showBochaKey" :title="$t('ui.showHide')">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                    <path v-if="showBochaKey" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                    <path v-else d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
-                  </svg>
-                </button>
-              </div>
-              <p class="field-hint">{{ $t('ui.getAnApiKeyFromTheBochaConsole') }}</p>
+              <label>{{ $t('ui.searxngAddress') }}</label>
+              <input v-model="draft.searxng_base_url" placeholder="http://127.0.0.1:8888" class="input" />
+              <p class="field-hint">{{ $t('ui.searxngAddressHint') }}</p>
             </div>
 
             <div class="form-actions">
@@ -677,19 +669,14 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { getSettings, updateSettings, type SettingsMap } from '../services/api'
-import { clearTokens, getDisplayUsername, getToken } from '../services/auth'
+import { getToken } from '../services/auth'
 import BaseUrlHelpTooltip from '../components/common/BaseUrlHelpTooltip.vue'
-import LanguageSwitcher from '../components/common/LanguageSwitcher.vue'
+import AppHeaderActions from '../components/common/AppHeaderActions.vue'
 import { t } from '../i18n'
 
 const router = useRouter()
 const route = useRoute()
-const displayUsername = computed(() => getDisplayUsername())
 
-function logout() {
-  clearTokens()
-  router.push('/login')
-}
 
 
 const tabs = [
@@ -697,11 +684,6 @@ const tabs = [
     key: 'overview',
     labelKey: 'ui.overview',
     icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>',
-  },
-  {
-    key: 'bailian',
-    labelKey: 'ui.bailian',
-    icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>',
   },
   {
     key: 'llm',
@@ -714,7 +696,7 @@ const tabs = [
     icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/></svg>',
   },
   {
-    key: 'mineru',
+    key: 'pdf',
     labelKey: 'ui.pdfParsing',
     icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>',
   },
@@ -751,11 +733,11 @@ const saving = ref(false)
 const draft = reactive<SettingsMap>({})
 const saved = reactive<SettingsMap>({})
 
-const showBailianKey = ref(false)
 const showLlmKey = ref(false)
 const showVlmKey = ref(false)
-const showMineruKey = ref(false)
-const showBochaKey = ref(false)
+const showOcrKey = ref(false)
+const showFunasrKey = ref(false)
+const showTtsKey = ref(false)
 
 // The easy task toggle is derived from whether easy_task_llm has a value.
 // Turning it off clears the easy model and saves immediately; the backend falls back to the main LLM.
@@ -770,67 +752,91 @@ async function toggleEasyTask(on: boolean) {
 }
 
 const DEFAULT_SETTINGS: SettingsMap = {
-
-  bailian_api_key: '',
-
-  llm_source: '',
-  llm_bailian_model: '',
   llm_api_key: '',
   llm_base_url: '',
   llm_model: '',
   llm_api_format: 'openai',
   easy_task_llm: '',
 
-  vlm_source: '',
-  vlm_bailian_model: '',
   vlm_api_key: '',
   vlm_base_url: '',
   vlm_model: '',
 
-  embedding_source: 'bailian',
-  embedding_bailian_model: '',
+  embedding_source: 'local',
   embedding_model: '',
   embedding_api_key: '',
-  embedding_base_url: '',
+  embedding_base_url: 'http://127.0.0.1:8001',
 
-  mineru_source: 'api',
-  mineru_base_url: '',
-  mineru_api_key: '',
+  ocr_base_url: '',
+  ocr_api_key: '',
+  ocr_model: '',
+  pdf_engine: 'auto',
 
   funasr_base_url: '',
+  funasr_api_key: '',
+  funasr_model: '',
 
-  bocha_api_key: '',
+  tts_base_url: '',
+  tts_api_key: '',
+  tts_model: '',
+  tts_voice: 'deniz',
+
+  searxng_base_url: 'http://127.0.0.1:8888',
 }
 
+const resolvedLlmEndpointPreview = computed(() => {
+  const format = draft.llm_api_format || 'openai'
+  const raw = (draft.llm_base_url || (format === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1')).trim().replace(/\/+$/, '')
+  if (format === 'anthropic') {
+    const base = raw.replace(/\/(v1\/messages|messages|v1)$/, '')
+    return `${base}/v1/messages`
+  }
+  const base = raw.replace(/\/(chat\/completions|completions)$/, '')
+  return `${base}/chat/completions`
+})
+const resolvedOcrEndpointPreview = computed(() => {
+  const raw = (draft.ocr_base_url || 'https://api.openai.com/v1').trim().replace(/\/+$/, '')
+  return raw.endsWith('/ocr') ? raw : `${raw}/ocr`
+})
+const resolvedAsrEndpointPreview = computed(() => {
+  const raw = (draft.funasr_base_url || 'https://api.openai.com/v1').trim().replace(/\/+$/, '')
+  return raw.endsWith('/audio/transcriptions') ? raw : `${raw}/audio/transcriptions`
+})
+const resolvedTtsEndpointPreview = computed(() => {
+  const raw = (draft.tts_base_url || 'https://api.openai.com/v1').trim().replace(/\/+$/, '')
+  return raw.endsWith('/audio/speech') ? raw : `${raw}/audio/speech`
+})
 
-const overviewLlmReady = computed(() => {
-  if (saved.llm_source === 'custom') return !!(saved.llm_api_key && saved.llm_model)
-  return !!(saved.bailian_api_key && saved.llm_bailian_model)
-})
-const overviewVlmReady = computed(() => {
-  if (saved.vlm_source === 'custom') return !!(saved.vlm_api_key && saved.vlm_model)
-  return !!(saved.bailian_api_key && saved.vlm_bailian_model)
-})
+
+const overviewLlmReady = computed(() => !!(saved.llm_api_key && saved.llm_base_url && saved.llm_model))
+const overviewVlmReady = computed(() => !!(saved.vlm_api_key && saved.vlm_model))
 const overviewEmbeddingReady = computed(() => {
-  if (saved.embedding_source === 'local') return !!saved.embedding_base_url
-  return !!(saved.bailian_api_key && saved.embedding_bailian_model)
+  if (saved.embedding_source === 'custom') return !!(saved.embedding_base_url && saved.embedding_model)
+  return !!saved.embedding_base_url
 })
-const overviewMineruReady = computed(() => {
-  if (saved.mineru_source === 'local') return !!saved.mineru_base_url
-  return !!saved.mineru_api_key
+const overviewWebSearchReady = computed(() => saved.web_search_verified === 'true')
+const overviewOcrReady = computed(() => !!(saved.ocr_api_key && saved.ocr_base_url && saved.ocr_model))
+// The local engine is always available; only the OCR-only mode depends on the service.
+const overviewPdfReady = computed(() => saved.pdf_engine !== 'ocr' || overviewOcrReady.value)
+const pdfEngineSummary = computed(() => {
+  if (saved.pdf_engine === 'local') return t('ui.pdfEngineSummaryLocal')
+  if (saved.pdf_engine === 'ocr') return t('ui.pdfEngineSummaryOcr')
+  return t('ui.pdfEngineSummaryAuto')
 })
-const overviewFunasrReady = computed(() => !!saved.funasr_base_url)
+const overviewFunasrReady = computed(() => !!(saved.funasr_api_key && saved.funasr_base_url && saved.funasr_model))
+const overviewTtsReady = computed(() => !!(saved.tts_api_key && saved.tts_base_url && saved.tts_model))
 
-const testing = reactive({ llm: false, easytask: false, vlm: false, embedding: false, mineru: false, funasr: false, websearch: false })
+const testing = reactive({ llm: false, easytask: false, vlm: false, embedding: false, ocr: false, funasr: false, tts: false, websearch: false })
 const testResult = reactive<{
   llm: { ok: boolean; msg: string } | null
   easytask: { ok: boolean; msg: string } | null
   vlm: { ok: boolean; msg: string } | null
   embedding: { ok: boolean; msg: string } | null
-  mineru: { ok: boolean; msg: string } | null
+  ocr: { ok: boolean; msg: string } | null
   funasr: { ok: boolean; msg: string } | null
+  tts: { ok: boolean; msg: string } | null
   websearch: { ok: boolean; msg: string } | null
-}>({ llm: null, easytask: null, vlm: null, embedding: null, mineru: null, funasr: null, websearch: null })
+}>({ llm: null, easytask: null, vlm: null, embedding: null, ocr: null, funasr: null, tts: null, websearch: null })
 
 const toast = reactive({ show: false, msg: '', type: 'success' as 'success' | 'error' })
 
@@ -842,6 +848,12 @@ const confirmDialog = reactive({ show: false, msg: '' })
 onMounted(async () => {
   try {
     const remote = await getSettings()
+    if (remote.embedding_source && remote.embedding_source !== 'custom' && remote.embedding_source !== 'local') {
+      remote.embedding_source = 'local'
+    }
+    if (!['auto', 'local', 'ocr'].includes(remote.pdf_engine || '')) {
+      remote.pdf_engine = 'auto'
+    }
     savedEmbeddingSource.value = remote.embedding_source || ''
     Object.assign(saved, DEFAULT_SETTINGS, remote)
     Object.assign(draft, DEFAULT_SETTINGS, remote)
@@ -853,19 +865,19 @@ onMounted(async () => {
 
 
 const SECTION_KEYS: Record<string, (keyof SettingsMap)[]> = {
-  bailian: ['bailian_api_key'],
-  llm: ['llm_source', 'llm_bailian_model', 'llm_api_key', 'llm_base_url', 'llm_model', 'llm_api_format'],
+  llm: ['llm_api_key', 'llm_base_url', 'llm_model', 'llm_api_format'],
   easytask: ['easy_task_llm'],
-  vlm: ['vlm_source', 'vlm_bailian_model', 'vlm_api_key', 'vlm_base_url', 'vlm_model'],
-  embedding: ['embedding_source', 'embedding_bailian_model', 'embedding_model', 'embedding_api_key', 'embedding_base_url'],
-  mineru: ['mineru_source', 'mineru_base_url', 'mineru_api_key'],
-  funasr: ['funasr_base_url'],
-  websearch: ['bocha_api_key'],
+  vlm: ['vlm_api_key', 'vlm_base_url', 'vlm_model'],
+  embedding: ['embedding_source', 'embedding_model', 'embedding_api_key', 'embedding_base_url'],
+  pdf: ['pdf_engine', 'ocr_base_url', 'ocr_api_key', 'ocr_model'],
+  funasr: ['funasr_base_url', 'funasr_api_key', 'funasr_model'],
+  tts: ['tts_base_url', 'tts_api_key', 'tts_model', 'tts_voice'],
+  websearch: ['searxng_base_url'],
 }
 
 async function save(section: string, force = false) {
 
-  if (section === 'llm' && draft.llm_source === 'custom' && !draft.llm_base_url) {
+  if (section === 'llm' && !draft.llm_base_url) {
     showToast(t('ui.customLlmRequiresABaseUrl'), 'error')
     return
   }
@@ -905,7 +917,7 @@ async function save(section: string, force = false) {
 }
 
 function sourceLabel(source: string): string {
-  return { bailian: t('ui.bailianModel'), local: t('ui.localService'), custom: t('ui.custom') }[source] || source
+  return { local: t('ui.localService'), custom: t('ui.custom') }[source] || source
 }
 
 function apiFormatLabel(format?: string): string {
@@ -926,28 +938,16 @@ async function testLlm() {
   testing.llm = true
   testResult.llm = null
   try {
-
-    let body: Record<string, string | undefined>
-    if (draft.llm_source === 'custom') {
-      if (!draft.llm_base_url) {
-        testResult.llm = { ok: false, msg: t('ui.enterABaseUrl') }
-        return
-      }
-      body = {
-        source: 'custom',
-        api_key: draft.llm_api_key,
-        base_url: draft.llm_base_url,
-        model: draft.llm_model,
-        api_format: draft.llm_api_format || 'openai',
-      }
-    } else {
-      // Send source=bailian so the backend uses the Bailian branch regardless of old saved llm_source.
-      // Include the draft API key so testing reflects unsaved form state.
-      body = {
-        source: 'bailian',
-        api_key: draft.bailian_api_key || undefined,
-        model: draft.llm_bailian_model || undefined,
-      }
+    if (!draft.llm_base_url) {
+      testResult.llm = { ok: false, msg: t('ui.enterABaseUrl') }
+      return
+    }
+    const body = {
+      source: 'custom',
+      api_key: draft.llm_api_key,
+      base_url: draft.llm_base_url,
+      model: draft.llm_model,
+      api_format: draft.llm_api_format || 'openai',
     }
     const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/llm`, {
       method: 'POST',
@@ -968,25 +968,16 @@ async function testEasyTask() {
   testing.easytask = true
   testResult.easytask = null
   try {
-    let body: Record<string, string | undefined>
-    if (draft.llm_source === 'custom') {
-      if (!draft.llm_base_url) {
-        testResult.easytask = { ok: false, msg: t('ui.enterABaseUrl') }
-        return
-      }
-      body = {
-        source: 'custom',
-        api_key: draft.llm_api_key,
-        base_url: draft.llm_base_url,
-        model: draft.easy_task_llm,
-        api_format: draft.llm_api_format || 'openai',
-      }
-    } else {
-      body = {
-        source: 'bailian',
-        api_key: draft.bailian_api_key || undefined,
-        model: draft.easy_task_llm || undefined,
-      }
+    if (!draft.llm_base_url) {
+      testResult.easytask = { ok: false, msg: t('ui.enterABaseUrl') }
+      return
+    }
+    const body = {
+      source: 'custom',
+      api_key: draft.llm_api_key,
+      base_url: draft.llm_base_url,
+      model: draft.easy_task_llm,
+      api_format: draft.llm_api_format || 'openai',
     }
     const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/easy-task-llm`, {
       method: 'POST',
@@ -1006,21 +997,11 @@ async function testVlm() {
   testing.vlm = true
   testResult.vlm = null
   try {
-
-    let body: Record<string, string | undefined>
-    if (draft.vlm_source === 'custom') {
-      body = {
-        source: 'custom',
-        api_key: draft.vlm_api_key,
-        base_url: draft.vlm_base_url,
-        model: draft.vlm_model,
-      }
-    } else {
-      body = {
-        source: 'bailian',
-        api_key: draft.bailian_api_key || undefined,
-        model: draft.vlm_bailian_model || undefined,
-      }
+    const body = {
+      source: 'custom',
+      api_key: draft.vlm_api_key,
+      base_url: draft.vlm_base_url,
+      model: draft.vlm_model,
     }
     const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/vlm`, {
       method: 'POST',
@@ -1044,9 +1025,10 @@ async function testEmbedding() {
     const body: Record<string, string | undefined> = {
       source: draft.embedding_source || undefined,
     }
-    if (draft.embedding_source === 'bailian') {
-      body.api_key = draft.bailian_api_key || undefined
-      body.model = draft.embedding_bailian_model || undefined
+    if (draft.embedding_source === 'custom') {
+      body.api_key = draft.embedding_api_key || undefined
+      body.base_url = draft.embedding_base_url || undefined
+      body.model = draft.embedding_model || undefined
     } else if (draft.embedding_source === 'local') {
       body.base_url = draft.embedding_base_url || undefined
       body.model = draft.embedding_model || undefined
@@ -1065,28 +1047,31 @@ async function testEmbedding() {
   }
 }
 
-async function testMineru() {
-  testing.mineru = true
-  testResult.mineru = null
+async function testOcr() {
+  testing.ocr = true
+  testResult.ocr = null
   try {
-    const payload: Record<string, string> = { source: draft.mineru_source || 'api' }
-    if (draft.mineru_source === 'local') {
-      payload.base_url = draft.mineru_base_url || ''
-    } else {
-      payload.api_key = draft.mineru_api_key || ''
+    if (!draft.ocr_base_url) {
+      testResult.ocr = { ok: false, msg: t('ui.enterABaseUrl') }
+      return
+    }
+    const payload = {
+      api_key: draft.ocr_api_key || '',
+      base_url: draft.ocr_base_url || '',
+      model: draft.ocr_model || '',
     }
 
-    const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/mineru`, {
+    const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify(payload),
     })
     const data = await res.json()
-    testResult.mineru = { ok: !!data.ok, msg: data.msg || (data.ok ? t('ui.connected') : t('ui.connectionFailed')) }
+    testResult.ocr = { ok: !!data.ok, msg: data.msg || (data.ok ? t('ui.connected') : t('ui.connectionFailed')) }
   } catch {
-    testResult.mineru = { ok: false, msg: t('ui.cannotConnect') }
+    testResult.ocr = { ok: false, msg: t('ui.cannotConnect') }
   } finally {
-    testing.mineru = false
+    testing.ocr = false
   }
 }
 
@@ -1094,10 +1079,19 @@ async function testFunasr() {
   testing.funasr = true
   testResult.funasr = null
   try {
+    if (!draft.funasr_base_url) {
+      testResult.funasr = { ok: false, msg: t('ui.enterABaseUrl') }
+      return
+    }
+    const payload = {
+      api_key: draft.funasr_api_key || '',
+      base_url: draft.funasr_base_url || '',
+      model: draft.funasr_model || '',
+    }
     const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/funasr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ base_url: draft.funasr_base_url || '' }),
+      body: JSON.stringify(payload),
     })
     const data = await res.json()
     testResult.funasr = { ok: !!data.ok, msg: data.msg || (data.ok ? t('ui.connected') : t('ui.connectionFailed')) }
@@ -1108,6 +1102,34 @@ async function testFunasr() {
   }
 }
 
+async function testTts() {
+  testing.tts = true
+  testResult.tts = null
+  try {
+    if (!draft.tts_base_url) {
+      testResult.tts = { ok: false, msg: t('ui.enterABaseUrl') }
+      return
+    }
+    const payload = {
+      api_key: draft.tts_api_key || '',
+      base_url: draft.tts_base_url || '',
+      model: draft.tts_model || '',
+      voice: draft.tts_voice || 'deniz',
+    }
+    const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json()
+    testResult.tts = { ok: !!data.ok, msg: data.msg || (data.ok ? t('ui.connected') : t('ui.connectionFailed')) }
+  } catch {
+    testResult.tts = { ok: false, msg: t('ui.cannotConnect') }
+  } finally {
+    testing.tts = false
+  }
+}
+
 async function testWebSearch() {
   testing.websearch = true
   testResult.websearch = null
@@ -1115,7 +1137,7 @@ async function testWebSearch() {
     const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/web-search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ api_key: draft.bocha_api_key }),
+      body: JSON.stringify({ base_url: draft.searxng_base_url || '' }),
     })
     const data = await res.json()
     testResult.websearch = { ok: !!data.ok, msg: data.msg || (data.ok ? t('ui.connected') : t('ui.connectionFailed')) }
@@ -1140,8 +1162,7 @@ function showToast(msg: string, type: 'success' | 'error') {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #f9f9f7;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg-main);
 }
 
 
@@ -1152,8 +1173,7 @@ function showToast(msg: string, type: 'success' | 'error') {
   gap: 16px;
   padding: 0 24px;
   height: 56px;
-  background: #fff;
-  border-bottom: 1px solid #e8e8e4;
+  background: var(--bg-main);
   flex-shrink: 0;
 }
 
@@ -1173,15 +1193,15 @@ function showToast(msg: string, type: 'success' | 'error') {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border: 1px solid #e0e0da;
-  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
   background: transparent;
-  color: #555;
+  color: var(--text-secondary);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.15s;
 }
-.btn-back:hover { background: #f0f0ec; }
+.btn-back:hover { background: var(--bg-hover); }
 
 .btn-header-icon {
   display: flex;
@@ -1189,19 +1209,19 @@ function showToast(msg: string, type: 'success' | 'error') {
   justify-content: center;
   width: 36px;
   height: 36px;
-  border: 1px solid #e0e0da;
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   background: transparent;
-  color: #555;
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background 0.15s;
 }
-.btn-header-icon:hover { background: #f0f0ec; }
+.btn-header-icon:hover { background: var(--bg-hover); }
 
 .settings-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -1211,7 +1231,7 @@ function showToast(msg: string, type: 'success' | 'error') {
   gap: 6px;
   padding: 6px 12px;
   font-size: 13px;
-  color: #666;
+  color: var(--text-tertiary);
   cursor: default;
 }
 
@@ -1240,9 +1260,9 @@ function showToast(msg: string, type: 'success' | 'error') {
 .settings-nav {
   width: 180px;
   flex-shrink: 0;
-  padding: 16px 8px;
-  background: #fff;
-  border-right: 1px solid #e8e8e4;
+  padding: 8px 12px;
+  width: 220px;
+  background: var(--bg-main);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1252,18 +1272,18 @@ function showToast(msg: string, type: 'success' | 'error') {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 10px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-full);
   background: transparent;
-  color: #555;
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.nav-item:hover { background: #f0f0ec; color: #1a1a1a; }
-.nav-item.active { background: #1a1a1a; color: #fff; }
+.nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.nav-item.active { background: var(--primary-soft); color: var(--on-primary-soft); font-weight: 500; }
 
 .nav-icon { display: flex; align-items: center; flex-shrink: 0; }
 
@@ -1276,7 +1296,7 @@ function showToast(msg: string, type: 'success' | 'error') {
 }
 
 .loading-state {
-  color: #888;
+  color: var(--text-tertiary);
   font-size: 14px;
 }
 
@@ -1291,17 +1311,17 @@ function showToast(msg: string, type: 'success' | 'error') {
 .section-header h2 {
   font-size: 18px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: var(--text-primary);
   margin: 0 0 6px;
 }
 .section-desc {
   font-size: 13px;
-  color: #888;
+  color: var(--text-tertiary);
   margin: 0;
   line-height: 1.5;
 }
 .section-desc a {
-  color: #1a73e8;
+  color: var(--primary-color);
   text-decoration: none;
 }
 .section-desc a:hover {
@@ -1311,7 +1331,7 @@ function showToast(msg: string, type: 'success' | 'error') {
 
 .section-divider {
   border: none;
-  border-top: 1px solid #e8e8e4;
+  border-top: 1px solid var(--border-color);
   margin: 32px 0;
 }
 
@@ -1373,7 +1393,7 @@ label {
   display: block;
   font-size: 13px;
   font-weight: 500;
-  color: #333;
+  color: var(--text-primary);
   margin-bottom: 6px;
 }
 .label-row {
@@ -1387,22 +1407,22 @@ label {
 }
 .optional {
   font-weight: 400;
-  color: #999;
+  color: var(--text-disabled);
 }
 
 .input {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid #d8d8d2;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   font-size: 13px;
-  color: #1a1a1a;
+  color: var(--text-primary);
   background: #fff;
   box-sizing: border-box;
   transition: border-color 0.15s;
   outline: none;
 }
-.input:focus { border-color: #1a1a1a; }
+.input:focus { border-color: var(--text-primary); }
 .input-sm { width: 100%; }
 
 .input-row {
@@ -1419,14 +1439,14 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #d8d8d2;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: #fff;
   cursor: pointer;
-  color: #666;
+  color: var(--text-tertiary);
   transition: background 0.15s;
 }
-.btn-icon:hover { background: #f0f0ec; }
+.btn-icon:hover { background: var(--bg-hover); }
 
 .radio-group {
   display: flex;
@@ -1438,12 +1458,12 @@ label {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: #333;
+  color: var(--text-primary);
   cursor: pointer;
 }
 .radio-item input { cursor: pointer; }
 .radio-item a {
-  color: #1a73e8;
+  color: var(--primary-color);
   text-decoration: none;
 }
 .radio-item a:hover {
@@ -1452,7 +1472,7 @@ label {
 
 .field-hint {
   font-size: 12px;
-  color: #999;
+  color: var(--text-disabled);
   margin: 4px 0 0;
 }
 
@@ -1460,8 +1480,8 @@ label {
 .easy-task-group {
   margin-top: 8px;
   padding: 14px 16px;
-  background: #fafaf8;
-  border: 1px solid #e8e8e4;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
 }
 .switch-row {
@@ -1478,12 +1498,12 @@ label {
   gap: 4px;
   font-size: 14px;
   font-weight: 500;
-  color: #1a1a1a;
+  color: var(--text-primary);
 }
 .switch-sub {
   font-size: 12px;
   font-weight: 400;
-  color: #999;
+  color: var(--text-disabled);
   line-height: 1.5;
 }
 .switch {
@@ -1495,7 +1515,7 @@ label {
   background: #d0d0cc;
   transition: background 0.15s;
 }
-.switch.on { background: #1a1a1a; }
+.switch.on { background: var(--text-primary); }
 .switch input {
   position: absolute;
   inset: 0;
@@ -1524,16 +1544,16 @@ label {
   gap: 12px;
   margin-top: 28px;
   padding-top: 20px;
-  border-top: 1px solid #e8e8e4;
+  border-top: 1px solid var(--border-color);
 }
 
 .btn-save {
   margin-left: auto;
   padding: 8px 20px;
-  background: #1a1a1a;
+  background: var(--text-primary);
   color: #fff;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-full);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -1545,14 +1565,14 @@ label {
 .btn-test {
   padding: 8px 16px;
   background: transparent;
-  color: #555;
-  border: 1px solid #d8d8d2;
-  border-radius: 6px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.15s;
 }
-.btn-test:hover:not(:disabled) { background: #f0f0ec; }
+.btn-test:hover:not(:disabled) { background: var(--bg-hover); }
 .btn-test:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .test-result {
@@ -1560,7 +1580,7 @@ label {
   margin-right: auto;
 }
 .test-result.ok { color: #2e7d32; }
-.test-result.fail { color: #c62828; }
+.test-result.fail { color: var(--error-color); }
 
 
 .toast {
@@ -1575,8 +1595,8 @@ label {
   z-index: 9999;
   pointer-events: none;
 }
-.toast.success { background: #1a1a1a; color: #fff; }
-.toast.error   { background: #c62828; color: #fff; }
+.toast.success { background: var(--text-primary); color: #fff; }
+.toast.error   { background: var(--error-color); color: #fff; }
 
 .toast-enter-active, .toast-leave-active { transition: opacity 0.25s, transform 0.25s; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(8px); }
@@ -1593,7 +1613,7 @@ label {
 }
 .modal-card {
   background: #fff;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   width: 440px;
   max-width: 90vw;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
@@ -1608,7 +1628,7 @@ label {
 .modal-header h3 {
   font-size: 16px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: var(--text-primary);
   margin: 0;
 }
 .modal-body {
@@ -1616,13 +1636,13 @@ label {
 }
 .modal-body p {
   font-size: 13px;
-  color: #555;
+  color: var(--text-secondary);
   line-height: 1.6;
   margin: 0 0 10px;
 }
 .modal-warn {
   font-weight: 500;
-  color: #c62828 !important;
+  color: var(--error-color) !important;
 }
 .modal-actions {
   display: flex;
@@ -1632,20 +1652,20 @@ label {
 }
 .btn-cancel {
   padding: 8px 18px;
-  border: 1px solid #d8d8d2;
-  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
   background: #fff;
-  color: #555;
+  color: var(--text-secondary);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.15s;
 }
-.btn-cancel:hover { background: #f0f0ec; }
+.btn-cancel:hover { background: var(--bg-hover); }
 .btn-danger {
   padding: 8px 18px;
   border: none;
-  border-radius: 6px;
-  background: #c62828;
+  border-radius: var(--radius-full);
+  background: var(--error-color);
   color: #fff;
   font-size: 13px;
   font-weight: 500;
@@ -1669,7 +1689,7 @@ label {
 .overview-card {
   padding: 16px;
   background: #fff;
-  border: 1px solid #e8e8e4;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -1687,7 +1707,7 @@ label {
 .overview-card-title {
   font-size: 13px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: var(--text-primary);
 }
 .overview-badge {
   font-size: 11px;
@@ -1705,7 +1725,7 @@ label {
 }
 .overview-card-detail {
   font-size: 12px;
-  color: #666;
+  color: var(--text-tertiary);
   margin: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -1719,12 +1739,12 @@ label {
   cursor: default;
 }
 .overview-card.disabled-card:hover {
-  border-color: #e8e8e4;
+  border-color: var(--border-color);
   box-shadow: none;
 }
 .overview-badge.coming-soon {
-  background: #f3f4f6;
-  color: #9ca3af;
+  background: var(--bg-hover);
+  color: var(--text-disabled);
 }
 
 
@@ -1739,7 +1759,30 @@ label {
 }
 .coming-soon-placeholder p {
   font-size: 14px;
-  color: #999;
+  color: var(--text-disabled);
   margin: 0;
+}
+
+.radio-item--stacked {
+  align-items: flex-start;
+}
+
+.radio-item--stacked input {
+  margin-top: 3px;
+}
+
+.radio-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+.subsection-title {
+  margin: 28px 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 </style>

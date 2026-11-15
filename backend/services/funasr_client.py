@@ -1,8 +1,61 @@
+import io
 import os
+import re
+import wave
 from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
+from utils.i18n import msg as ui_msg
+
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；.!?;؟\n])\s*")
+
+
+def _make_minimal_wav() -> bytes:
+    """Create an in-memory 0.25s 16kHz mono PCM WAV buffer for health probing."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(b"\x00\x00" * 4000)
+    return buf.getvalue()
+
+
+def _get_audio_duration_ms(file_path: str) -> int:
+    try:
+        import soundfile as sf
+
+        info = sf.info(file_path)
+        if info.frames > 0 and info.samplerate > 0:
+            return int(info.frames * 1000 / info.samplerate)
+    except Exception:
+        pass
+    try:
+        with wave.open(file_path, "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if frames > 0 and rate > 0:
+                return int(frames * 1000 / rate)
+    except Exception:
+        pass
+    return 0
+
+
+def _extract_error_message(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, dict) and err.get("message"):
+                return str(err["message"])
+            for key in ("detail", "message", "msg"):
+                if data.get(key):
+                    return str(data[key])
+    except Exception:
+        pass
+    text = (response.text or "").strip()
+    return ui_msg("service_returned", status=response.status_code) + (f": {text[:300]}" if text else "")
 
 
 @dataclass
@@ -23,10 +76,56 @@ class FunASRResult:
     error_message: Optional[str] = None
 
 
+def _text_to_segments(full_text: str, duration_ms: int) -> list[FunASRSegment]:
+    """Split a plain transcript into sentence segments with proportional timestamps."""
+    cleaned = (full_text or "").strip()
+    if not cleaned:
+        return []
+
+    parts = [part.strip() for part in SENTENCE_SPLIT_RE.split(cleaned) if part and part.strip()]
+    if not parts:
+        return []
+
+    if duration_ms <= 0:
+        return [FunASRSegment(speaker=0, text=part, start=0, end=0) for part in parts]
+
+    total_chars = sum(len(part) for part in parts) or len(parts)
+    consumed_chars = 0
+    segments: list[FunASRSegment] = []
+
+    for index, part in enumerate(parts):
+        start_ms = int(round(consumed_chars * duration_ms / total_chars))
+        consumed_chars += len(part)
+        end_ms = duration_ms if index == len(parts) - 1 else int(round(consumed_chars * duration_ms / total_chars))
+        segments.append(FunASRSegment(speaker=0, text=part, start=start_ms, end=max(start_ms, end_ms)))
+
+    return segments
+
+
 class FunASRClient:
-    def __init__(self, base_url: str, timeout: int | None = None):
-        self.base_url = base_url.rstrip("/")
+    """Client for OpenAI-compatible /audio/transcriptions endpoints."""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout: int | None = None,
+    ):
+        self.base_url = (base_url or "").strip().rstrip("/")
+        self.api_key = (api_key or "").strip()
+        self.model = (model or "").strip()
         self.timeout = timeout or int(os.getenv("FUNASR_TIMEOUT", "600"))
+
+    def _build_transcribe_url(self) -> str:
+        return (
+            self.base_url
+            if self.base_url.endswith("/audio/transcriptions")
+            else f"{self.base_url}/audio/transcriptions"
+        )
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
     async def transcribe(
         self,
@@ -34,88 +133,116 @@ class FunASRClient:
         hotword: str | None = None,
     ) -> FunASRResult:
         if not os.path.exists(file_path):
-            return FunASRResult(success=False, error_message=f"文件不存在: {file_path}")
+            return FunASRResult(success=False, error_message=ui_msg("file_not_found", path=file_path))
 
-        data = {}
+        data: dict[str, str] = {}
+        if self.model:
+            data["model"] = self.model
         if hotword:
-            data["hotword"] = hotword
+            data["prompt"] = hotword
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 with open(file_path, "rb") as f:
                     response = await client.post(
-                        f"{self.base_url}/transcribe",
+                        self._build_transcribe_url(),
+                        headers=self._headers(),
                         files={"file": (os.path.basename(file_path), f)},
                         data=data,
                     )
         except httpx.TimeoutException:
-            return FunASRResult(success=False, error_message=f"FunASR 服务超时（{self.timeout}秒）")
+            return FunASRResult(success=False, error_message=ui_msg("asr_timeout", seconds=self.timeout))
         except httpx.ConnectError:
-            return FunASRResult(success=False, error_message=f"无法连接 FunASR 服务: {self.base_url}")
+            return FunASRResult(success=False, error_message=ui_msg("asr_cannot_connect", url=self.base_url))
         except Exception as exc:
-            return FunASRResult(success=False, error_message=f"语音识别失败: {exc}")
+            return FunASRResult(success=False, error_message=ui_msg("asr_failed_detail", error=exc))
 
-        if response.status_code != 200:
-            return FunASRResult(
-                success=False,
-                error_message=f"FunASR 服务返回错误: {response.status_code} - {response.text[:500]}",
-            )
+        if response.status_code not in (200, 201):
+            return FunASRResult(success=False, error_message=_extract_error_message(response))
 
         try:
             payload = response.json()
         except ValueError:
-            return FunASRResult(success=False, error_message="FunASR 服务返回了非 JSON 响应")
+            return FunASRResult(success=False, error_message=ui_msg("asr_non_json"))
 
         if not isinstance(payload, dict):
-            return FunASRResult(success=False, error_message="FunASR 服务响应格式不正确")
+            return FunASRResult(success=False, error_message=ui_msg("asr_bad_format"))
 
-        if not payload.get("success"):
-            return FunASRResult(success=False, error_message=payload.get("error") or "FunASR 识别失败")
+        if payload.get("success") is False:
+            return FunASRResult(success=False, error_message=payload.get("error") or ui_msg("asr_failed"))
 
         result_data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-        raw_segments = result_data.get("segments", [])
-        if not isinstance(raw_segments, list):
-            return FunASRResult(success=False, error_message="FunASR 响应 segments 格式不正确")
+        full_text = str(result_data.get("text") or result_data.get("full_text") or "").strip()
+        duration_ms = self._to_ms(result_data.get("duration")) or _get_audio_duration_ms(file_path)
 
-        segments = [
-            FunASRSegment(
-                speaker=self._int_or_zero(seg.get("speaker")),
-                text=str(seg.get("text", "") or "").strip(),
-                start=self._int_or_zero(seg.get("start")),
-                end=self._int_or_zero(seg.get("end")),
-            )
-            for seg in raw_segments
-            if isinstance(seg, dict)
-            if str(seg.get("text", "") or "").strip()
-        ]
+        raw_segments = result_data.get("segments")
+        segments: list[FunASRSegment] = []
+        if isinstance(raw_segments, list) and raw_segments:
+            for seg in raw_segments:
+                if not isinstance(seg, dict):
+                    continue
+                seg_text = str(seg.get("text", "") or "").strip()
+                if not seg_text:
+                    continue
+                segments.append(
+                    FunASRSegment(
+                        speaker=self._int_or_zero(seg.get("speaker")),
+                        text=seg_text,
+                        start=self._to_ms(seg.get("start")),
+                        end=self._to_ms(seg.get("end")),
+                    )
+                )
 
+        if not segments and full_text:
+            segments = _text_to_segments(full_text, duration_ms)
+
+        if not full_text and segments:
+            full_text = " ".join(seg.text for seg in segments)
+
+        speakers = {seg.speaker for seg in segments} or {0}
         return FunASRResult(
             success=True,
-            duration=self._int_or_zero(result_data.get("duration")),
-            speaker_count=self._int_or_zero(result_data.get("speaker_count")),
-            full_text=str(result_data.get("full_text", "") or ""),
+            duration=duration_ms,
+            speaker_count=self._int_or_zero(result_data.get("speaker_count")) or len(speakers),
+            full_text=full_text,
             segments=segments,
         )
 
     async def health_check(self) -> tuple[bool, str]:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(f"{self.base_url}/health")
-            if response.status_code != 200:
-                return False, f"服务返回 {response.status_code}"
-            try:
-                data = response.json()
-            except ValueError:
-                return False, "服务返回了非 JSON 响应"
-            if not isinstance(data, dict):
-                return False, "服务响应格式不正确"
-            if data.get("model_loaded") is False:
-                return False, "服务可连接，但模型尚未加载"
-            return True, "FunASR 服务连接成功"
+            wav_bytes = _make_minimal_wav()
+            data = {"model": self.model} if self.model else {}
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(
+                    self._build_transcribe_url(),
+                    headers=self._headers(),
+                    files={"file": ("probe.wav", wav_bytes, "audio/wav")},
+                    data=data,
+                )
+            if response.status_code in (200, 201):
+                label = ui_msg("conn_ok_model", model=self.model) if self.model else ui_msg("conn_ok")
+                return True, label
+            return False, _extract_error_message(response)
         except httpx.ConnectError:
-            return False, f"无法连接到 {self.base_url}"
+            return False, ui_msg("cannot_connect_url", url=self.base_url)
+        except httpx.TimeoutException:
+            return False, ui_msg("conn_timeout_url", url=self.base_url)
         except Exception as exc:
             return False, str(exc)
+
+    @staticmethod
+    def _to_ms(value) -> int:
+        if value is None or value == "":
+            return 0
+        if isinstance(value, float):
+            return max(0, int(round(value * 1000)))
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            try:
+                return max(0, int(round(float(value) * 1000)))
+            except (TypeError, ValueError):
+                return 0
 
     @staticmethod
     def _int_or_zero(value) -> int:

@@ -4,15 +4,19 @@ set -e
 cd "$(dirname "$0")"
 
 DELETE_DATA=false
+DELETE_DEPS=false
 
 for arg in "$@"; do
   case "$arg" in
     -d|--data)
       DELETE_DATA=true
       ;;
+    --deps)
+      DELETE_DEPS=true
+      ;;
     -h|--help)
       cat <<'EOF'
-Usage: ./clean.sh [--data]
+Usage: ./clean.sh [--data] [--deps]
 
 清理 local-Notebook 运行产生的中间文件。
 
@@ -21,10 +25,12 @@ Options:
                  (LOCAL_NOTEBOOK_DATA_DIR,默认 ./local-notebook-data)
                  包括 SQLite 数据库、向量库、上传文件、Settings 表中的
                  LLM API key(明文)。需要输入 yes 二次确认,不可恢复。
+  --deps         同时清理 frontend/node_modules 与 frontend/dist。
   -h, --help     显示此帮助。
 
 Examples:
-  ./clean.sh              # 只清理中间文件(安全,可随时使用)
+  ./clean.sh              # 只清理缓存与中间文件(安全,保留依赖与构建产物)
+  ./clean.sh --deps       # 额外清理前端 node_modules 与 dist
   ./clean.sh --data       # 清理中间文件并删除全部数据(需确认)
 
 提示:清理前建议先 ./start.sh down 停止服务,避免占用导致删除失败。
@@ -40,17 +46,17 @@ EOF
 done
 
 # ────────────────────────────────────────────────────────────────
-# 前置检查:docker compose 是否在运行
+# 前置检查:本地服务或 docker compose 是否在运行
 # ────────────────────────────────────────────────────────────────
-DOCKER_RUNNING=false
-if command -v docker >/dev/null 2>&1; then
-  if [[ -n "$(docker compose ps -q 2>/dev/null)" ]]; then
-    DOCKER_RUNNING=true
-  fi
+SERVICES_RUNNING=false
+if ./start.sh status 2>/dev/null | grep -q "RUNNING"; then
+  SERVICES_RUNNING=true
+elif command -v docker >/dev/null 2>&1 && [[ -n "$(docker compose ps -q 2>/dev/null)" ]]; then
+  SERVICES_RUNNING=true
 fi
 
-if [[ "$DOCKER_RUNNING" == "true" ]]; then
-  echo "检测到 docker compose 服务正在运行。"
+if [[ "$SERVICES_RUNNING" == "true" ]]; then
+  echo "检测到 local-Notebook 服务正在运行。"
   if [[ "$DELETE_DATA" == "true" ]]; then
     echo "数据清理前必须先停止服务,否则可能导致 SQLite 数据损坏。"
     echo ""
@@ -63,7 +69,7 @@ if [[ "$DOCKER_RUNNING" == "true" ]]; then
       exit 1
     fi
   else
-    echo "(中间文件清理与容器隔离,继续)"
+    echo "(中间文件清理不影响运行中的服务,继续)"
     echo ""
   fi
 fi
@@ -73,8 +79,10 @@ fi
 # ────────────────────────────────────────────────────────────────
 echo "=== 清理运行中间文件 ==="
 
-echo "  [frontend] node_modules / dist"
-rm -rf frontend/node_modules frontend/dist
+if [[ "$DELETE_DEPS" == "true" ]]; then
+  echo "  [frontend] node_modules / dist"
+  rm -rf frontend/node_modules frontend/dist
+fi
 
 echo "  [python]   __pycache__ / *.pyc / *.pyo / *.egg-info / .pytest_cache"
 find backend services -type d \

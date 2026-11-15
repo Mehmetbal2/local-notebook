@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sqlite3
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -90,8 +90,16 @@ class QueryKnowledgeBaseTool(CallableTool2[QueryKBParams]):
             if not resolved_ids:
                 return ToolError(message=f"Files not found: {', '.join(file_names)}")
             if file_ids:
+                # Never widen the search beyond the sources the user selected.
                 allowed = set(file_ids)
-                file_ids = [fid for fid in resolved_ids if fid in allowed] or resolved_ids
+                file_ids = [fid for fid in resolved_ids if fid in allowed]
+                if not file_ids:
+                    return ToolError(
+                        message=(
+                            f"Not among the selected sources: {', '.join(file_names)}. "
+                            "Search without file_names, or use list_files to see the selected sources."
+                        )
+                    )
             else:
                 file_ids = resolved_ids
 
@@ -124,7 +132,7 @@ class QueryKnowledgeBaseTool(CallableTool2[QueryKBParams]):
         if not text_hits and not image_hits:
             return ToolOk(output=json.dumps([{"message": "No relevant content found"}], ensure_ascii=False))
 
-        results = []
+        results: list[dict[str, Any]] = []
 
         if text_hits:
             results.append({"_type": "text_results", "count": len(text_hits)})
@@ -161,9 +169,8 @@ class QueryKnowledgeBaseTool(CallableTool2[QueryKBParams]):
 
     @staticmethod
     def _resolve_file_ids_by_name(project_id: str, file_names: list[str]) -> list[str]:
-        db_path = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./local_notebook.db")
-        if db_path.startswith("sqlite"):
-            db_path = db_path.split("///")[-1]
+        from paths import get_sqlite_db_path
+        db_path = get_sqlite_db_path()
         try:
             conn = sqlite3.connect(db_path)
             placeholders = ",".join("?" * len(file_names))
@@ -230,9 +237,8 @@ class QueryKnowledgeBaseTool(CallableTool2[QueryKBParams]):
 
     @staticmethod
     def _get_audio_segment_meta(segment_id: str) -> dict:
-        db_path = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./local_notebook.db")
-        if db_path.startswith("sqlite"):
-            db_path = db_path.split("///")[-1]
+        from paths import get_sqlite_db_path
+        db_path = get_sqlite_db_path()
 
         conn = None
         try:

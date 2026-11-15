@@ -11,6 +11,7 @@ from kosong.tooling import CallableTool2, ToolOk, ToolError, ToolReturnValue
 
 from agent.tools.image_location import get_pdf_image_location
 from agent.tools.query_knowledge_base import CitationState
+from paths import get_sqlite_db_path, resolve_stored_path
 
 logger = logging.getLogger("tool.file_tools")
 
@@ -19,10 +20,7 @@ AUDIO_EXTENSIONS = {"wav", "mp3", "m4a"}
 
 
 def _get_db_path() -> str:
-    db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./local_notebook.db")
-    if "///" in db_url:
-        return db_url.split("///")[-1]
-    return "local_notebook.db"
+    return get_sqlite_db_path()
 
 
 def _db_query(sql: str, params: tuple) -> list[dict]:
@@ -47,6 +45,11 @@ def _get_file_by_name(project_id: str, file_name: str, file_ids: Optional[list[s
     row = rows[0]
     if file_ids and row["id"] not in file_ids:
         return None
+    row["file_path"] = resolve_stored_path(
+        row.get("file_path"),
+        project_id=project_id,
+        file_name=row.get("file_name"),
+    )
     return row
 
 
@@ -326,7 +329,7 @@ class AskImageTool(CallableTool2[AskImageParams]):
         if not img_path:
             return ToolOk(output=json.dumps({
                 "error": f"No image file found for image_index={image_index}",
-                "hint": "The image may not have been extracted during PDF parsing. Confirm that MinerU parsed the PDF correctly.",
+                "hint": "The image may not have been extracted during PDF parsing. Confirm that the PDF was parsed correctly.",
             }, ensure_ascii=False))
 
         answer = await self._call_vlm(img_path, question)
@@ -366,5 +369,5 @@ class AskImageTool(CallableTool2[AskImageParams]):
             answer, _ = await describe_image(image_path, prompt=question)
             return answer
         except Exception as e:
-            logger.warning(f"[ask_image] VLM 调用失败: {e}")
+            logger.warning(f"[ask_image] VLM call failed: {e}")
             return None

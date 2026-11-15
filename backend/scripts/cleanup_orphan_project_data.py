@@ -152,7 +152,8 @@ async def _active_project_ids() -> set[str]:
 
 
 def _cleanup_uploads(active_project_ids: set[str], dry_run: bool) -> list[str]:
-    upload_dir = Path(os.getenv("UPLOAD_DIR", "./uploads"))
+    from paths import get_upload_dir
+    upload_dir = get_upload_dir()
     if not upload_dir.exists():
         return []
 
@@ -170,17 +171,16 @@ def _cleanup_uploads(active_project_ids: set[str], dry_run: bool) -> list[str]:
 def _cleanup_milvus(active_project_ids: set[str], dry_run: bool) -> list[str]:
     try:
         from services.vector_service import (
-            MILVUS_URI,
+            _get_client,
             delete_vectors_not_in_projects,
             shared_collection_names,
         )
-        from pymilvus import MilvusClient
     except Exception as exc:
         print(f"Milvus cleanup skipped: cannot import pymilvus ({exc})")
         return []
 
     try:
-        client = MilvusClient(uri=MILVUS_URI)
+        client = _get_client()
         collections = client.list_collections()
     except Exception as exc:
         print(f"Milvus cleanup skipped: cannot connect ({exc})")

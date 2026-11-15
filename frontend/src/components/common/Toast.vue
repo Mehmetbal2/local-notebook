@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="toast-fade">
-      <div v-if="visible" class="toast-notification" :class="typeClass">
+      <div v-if="visible" class="toast-notification" :class="typeClass" role="status" aria-live="polite">
         <svg v-if="type === 'success'" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
           <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
         </svg>
@@ -42,37 +42,37 @@ const typeClass = computed(() => `toast-${props.type}`)
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  background: var(--bg-white);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  gap: 10px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 12px 20px 12px 16px;
+  background: var(--bg-inverse);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   z-index: 10001;
   font-size: 14px;
-  color: var(--text-primary);
+  line-height: 1.4;
+  color: var(--text-on-inverse);
+}
+
+.toast-notification svg {
+  flex-shrink: 0;
 }
 
 .toast-success svg {
-  color: #4caf50;
-}
-
-.toast-error {
-  background: rgba(244, 67, 54, 0.85);
-  color: white;
+  color: #81c995;
 }
 
 .toast-error svg {
-  color: white;
+  color: #f28b82;
 }
 
 .toast-info svg {
-  color: #2196f3;
+  color: #8ab4f8;
 }
 
 .toast-warning svg {
-  color: #ff9800;
+  color: #fdd663;
 }
-
 
 .toast-fade-enter-active,
 .toast-fade-leave-active {

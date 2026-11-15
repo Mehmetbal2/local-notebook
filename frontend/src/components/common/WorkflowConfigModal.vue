@@ -127,6 +127,7 @@
 </template>
 
 <script setup lang="ts">
+import { useEscapeClose } from '../../composables/useEscapeClose'
 import { ref, watch, computed } from 'vue'
 import { t } from '../../i18n'
 
@@ -263,6 +264,8 @@ function toggleSelectAll() {
 }
 
 
+
+useEscapeClose(() => props.visible, () => handleClose())
 </script>
 
 <style scoped>
@@ -291,7 +294,7 @@ function toggleSelectAll() {
   height: 720px;
   max-height: 95vh;
   background: var(--bg-white);
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
   animation: slideUp 0.25s ease;
   display: flex;
@@ -466,7 +469,7 @@ function toggleSelectAll() {
 }
 
 .file-icon.document {
-  color: #1a73e8;
+  color: var(--primary-color);
 }
 
 .file-name {
@@ -513,7 +516,7 @@ function toggleSelectAll() {
 
 .workflow-icon.source-quick-read {
   background: linear-gradient(135deg, rgba(147, 197, 253, 0.5) 0%, rgba(96, 165, 250, 0.5) 100%);
-  color: #1d4ed8;
+  color: var(--primary-hover);
 }
 
 .workflow-icon.source-deep-dive {
@@ -605,7 +608,7 @@ function toggleSelectAll() {
 
 .workflow-config-btn {
   padding: 10px 24px;
-  border-radius: 8px;
+  border-radius: var(--radius-full);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -662,7 +665,7 @@ function toggleSelectAll() {
 }
 
 .required {
-  color: #ef4444;
+  color: var(--error-color);
   margin-left: 4px;
   font-weight: bold;
 }

@@ -87,7 +87,7 @@ class SegmentService:
                     original_len = len(atomic_content)
                     atomic_content = atomic_content[:self.hard_limit]
                     warnings.append(
-                        f"Segment {segment_index}: 内容过长({original_len}字)，已截断至{self.hard_limit}字"
+                        f"Segment {segment_index}: content too long ({original_len} chars), truncated to {self.hard_limit} chars"
                     )
 
                 block_ids = self._find_block_ids(blocks, atomic_start, unit_end)
@@ -133,7 +133,7 @@ class SegmentService:
                 original_len = len(current_content)
                 current_content = current_content[:self.hard_limit]
                 warnings.append(
-                    f"Segment {segment_index}: 内容过长({original_len}字)，已截断至{self.hard_limit}字"
+                    f"Segment {segment_index}: content too long ({original_len} chars), truncated to {self.hard_limit} chars"
                 )
 
             if len(current_content) < self.min_segment_chars and segments:
@@ -229,7 +229,7 @@ class SegmentService:
         return units
 
     def _split_sentences(self, text: str, offset: int = 0) -> List[Dict[str, Any]]:
-        pattern = r'([。！？!?；;]+|\.(?:\s|$)|\n)'
+        pattern = r'([。！？!?；;؟؛۔]+|\.(?:\s|$)|\n)'
         sentences = []
         last_end = 0
 

@@ -1,9 +1,9 @@
-"""Feature while-loop agent：为报告的单个栏目生成内容。
+"""Feature while-loop agent: generates the content of a single report section.
 
-形态复刻 chat_agent 的 kosong.step 循环，但运行在后台任务里、不向客户端流式：
-拿到栏目要求 → 用工具取证 → 产出带 [citation_X] 的 markdown → 转成 blocks。
+It mirrors chat_agent's kosong.step loop but runs in a background task without streaming to the client:
+section requirements → gather evidence with tools → markdown with [citation_X] → blocks.
 
-整份 workflow 共享一个 CitationState（引用编号全局连续）。
+The whole workflow shares one CitationState (citation numbers are continuous across it).
 """
 
 import asyncio
@@ -28,6 +28,7 @@ from kosong.tooling.simple import SimpleToolset
 from services.llm_provider import create_llm_chat_provider
 from services.feature_agent_trace_service import upsert_feature_agent_trace
 from services.usage_service import record_model_usage
+from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger("feature_agent")
 
@@ -121,19 +122,14 @@ async def _build_tools(
             if not enable_web_search:
                 continue
             from agent.tools.web_search import WebSearchTool
-            _, ws_key, ws_base_url = await config.resolve_web_search_config()
-            tools.append(WebSearchTool(
-                citation_state=citation_state,
-                api_key=ws_key or "",
-                base_url=ws_base_url or "",
-            ))
+            tools.append(await WebSearchTool.create(citation_state))
         else:
             tools.append(tool_cls(citation_state=citation_state))
     return tools
 
 
 class FeatureAgent:
-    """生成一个栏目。"""
+    """Generate one section."""
 
     def __init__(self):
         self.system_prompt = FEATURE_AGENT_SYSTEM_PROMPT
@@ -152,13 +148,13 @@ class FeatureAgent:
         trace_phase: str = "draft",
         cancellation_check: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
-        """返回 (blocks, citations_snapshot, next_display_num)。
+        """Return (blocks, citations_snapshot, next_display_num).
 
-        失败时抛异常，由调用方标记该栏目 failed。
+        Raises on failure; the caller marks the section failed.
         """
         api_key, base_url, model, api_format = await config.resolve_llm_provider_config()
         if not api_key or not model:
-            raise RuntimeError("LLM 未配置")
+            raise RuntimeError(ui_msg("llm_not_configured"))
 
         chat_provider = create_llm_chat_provider(
             model=model,
@@ -169,8 +165,8 @@ class FeatureAgent:
         )
 
         capability = get_capability(feature_type)
-        # 联网工具仅在已配置时启用
-        ws_enabled, _, _ = await config.resolve_web_search_config()
+        # the web search tool is enabled only when configured
+        ws_enabled, _ = await config.resolve_web_search_config()
         tools = await _build_tools(capability.tools, citation_state, ws_enabled)
         toolset = SimpleToolset(tools)
 
@@ -270,16 +266,16 @@ class FeatureAgent:
                 else:
                     step_result = await step_coro
             except asyncio.TimeoutError as e:
-                message = f"LLM 单轮调用超时（{FEATURE_AGENT_LLM_STEP_TIMEOUT} 秒）"
+                message = ui_msg("llm_step_timeout", seconds=FEATURE_AGENT_LLM_STEP_TIMEOUT)
                 await save_trace("failed", error=message)
                 raise RuntimeError(message) from e
             except asyncio.CancelledError:
-                await asyncio.shield(save_trace("failed", error="栏目生成被取消或超时"))
+                await asyncio.shield(save_trace("failed", error="section generation cancelled or timed out"))
                 raise
             except ChatProviderError as e:
                 message = _exception_message(e)
                 await save_trace("failed", error=message)
-                raise RuntimeError(f"LLM 调用失败: {message}") from e
+                raise RuntimeError(ui_msg("llm_call_failed", error=message)) from e
             except Exception as e:
                 message = _exception_message(e)
                 await save_trace("failed", error=message)
@@ -323,8 +319,8 @@ class FeatureAgent:
 
         final_text = (final_text or "").strip()
         if not final_text:
-            await save_trace("failed", error="栏目生成结果为空")
-            raise RuntimeError("栏目生成结果为空")
+            await save_trace("failed", error="empty section")
+            raise RuntimeError(ui_msg("section_empty"))
 
         blocks, next_display_num = markdown_to_blocks(
             final_text,
@@ -332,7 +328,7 @@ class FeatureAgent:
             start_display_num,
         )
 
-        # 本栏目引用快照：取已分配 display_num 的引用，供前端按 citation_id 查找
+        # citation snapshot for this section: citations with an assigned display_num, looked up by citation_id on the frontend
         citations_snapshot: Dict[str, Any] = {
             cid: meta
             for cid, meta in citation_state.citations_map.items()

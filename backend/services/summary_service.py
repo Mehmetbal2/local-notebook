@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import math
+import os
+from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 import config
@@ -105,6 +108,77 @@ DEFAULT_OUTPUT_LANGUAGE = "English"
 SUMMARY_GENERATION_MAX_ATTEMPTS = 3
 SUMMARY_RETRY_BASE_DELAY = 0.5
 
+# Large books should stay fast, but quality must not collapse after 40 segments.
+# Up to FULL_LIMIT every segment gets an LLM summary; above it a bounded,
+# evenly-spaced sample including the final segment is summarized and the rest
+# receive a sentence-boundary extractive snippet.
+SEGMENT_SUMMARY_FULL_LIMIT = int(os.getenv("SEGMENT_SUMMARY_FULL_LIMIT", "200"))
+SEGMENT_SUMMARY_SAMPLE_MIN = int(os.getenv("SEGMENT_SUMMARY_SAMPLE_MIN", "32"))
+SEGMENT_SUMMARY_SAMPLE_MAX = int(os.getenv("SEGMENT_SUMMARY_SAMPLE_MAX", "64"))
+SEGMENT_SUMMARY_SAMPLE_RATIO = float(os.getenv("SEGMENT_SUMMARY_SAMPLE_RATIO", "0.15"))
+SNIPPET_MAX_CHARS = int(os.getenv("SEGMENT_SUMMARY_SNIPPET_CHARS", "240"))
+SEGMENT_SUMMARY_CONCURRENCY = int(os.getenv("SEGMENT_SUMMARY_CONCURRENCY", "2"))
+SEGMENT_SUMMARY_MAX_ATTEMPTS = int(os.getenv("SEGMENT_SUMMARY_MAX_ATTEMPTS", "5"))
+
+SUMMARY_SENTENCE_ENDINGS = "。！？!?؛;؟۔.…"
+
+
+@dataclass
+class SegmentSummaryBatch:
+    summaries: dict[int, str]
+    llm_indices: set[int]
+
+
+def _evenly_spaced_indices(total: int, count: int) -> list[int]:
+    """Return ``count`` indices across ``total`` that always include the last item."""
+    if total <= 0 or count <= 0:
+        return []
+    if count >= total:
+        return list(range(total))
+    if count == 1:
+        return [total - 1]
+    return sorted({
+        round(index * (total - 1) / (count - 1))
+        for index in range(count)
+    })
+
+
+def _extractive_snippet(content: str, limit: int = SNIPPET_MAX_CHARS) -> str:
+    """Create a readable fallback snippet at a sentence or word boundary."""
+    text = (content or "").strip()
+    if len(text) <= limit:
+        return text
+
+    window = text[:limit]
+    cut = max(window.rfind(char) for char in SUMMARY_SENTENCE_ENDINGS)
+    if cut >= int(limit * 0.5):
+        return text[:cut + 1].strip()
+
+    cut = window.rfind(" ")
+    if cut >= int(limit * 0.6):
+        return text[:cut].rstrip() + "…"
+
+    return text[:limit].rstrip() + "…"
+
+
+def _is_retryable_llm_error(error: Exception) -> bool:
+    status = getattr(error, "status_code", None)
+    if status in (408, 409, 425, 429, 500, 502, 503, 504):
+        return True
+    message = str(error).lower()
+    return any(
+        marker in message
+        for marker in ("rate limit", "429", "timeout", "temporarily", "connection reset")
+    )
+
+
+def _sample_summaries(summaries: list[str], limit: int) -> list[str]:
+    usable = [summary for summary in summaries if summary]
+    if not usable:
+        return []
+    indices = _evenly_spaced_indices(len(usable), min(limit, len(usable)))
+    return [usable[index] for index in indices]
+
 
 def normalize_output_language(output_language: str | None) -> str:
     value = (output_language or "").strip()
@@ -113,6 +187,8 @@ def normalize_output_language(output_language: str | None) -> str:
         return "Chinese"
     if normalized in {"en", "en-us", "en-gb", "english"}:
         return "English"
+    if normalized in {"tr", "tr-tr", "turkish", "türkçe", "turkce"}:
+        return "Turkish"
     return value or DEFAULT_OUTPUT_LANGUAGE
 
 
@@ -180,8 +256,8 @@ async def _llm_complete(
 
 
 async def _resolve_llm() -> tuple[str, str | None, str, str] | None:
-    # 解析任务的摘要生成属于「简单任务」,走节省计划:若配置了 easy_task_llm 则用更便宜的
-    # 模型(复用主 LLM 的 key/url),否则与主 LLM 一致。
+    # Summaries generated while parsing count as "simple tasks" and follow the saving plan: with
+    # easy_task_llm set they use the cheaper model (reusing the main LLM's key/url), otherwise the main LLM.
     api_key, base_url, model, api_format = await config.resolve_easy_task_llm_provider_config()
     if not api_key or not model:
         return None
@@ -224,41 +300,82 @@ async def generate_segment_summaries(
     base_url: str | None,
     model: str,
     api_format: str = "openai",
-    concurrency: int = 30,
+    concurrency: int = SEGMENT_SUMMARY_CONCURRENCY,
     output_language: str | None = None,
     user_id: str | None = None,
     progress_callback: Callable[[int], Awaitable[None]] | None = None,
-) -> dict[int, str]:
+) -> SegmentSummaryBatch:
     if not segments:
-        return {}
+        return SegmentSummaryBatch(summaries={}, llm_indices=set())
 
     semaphore = asyncio.Semaphore(concurrency)
     results: dict[int, str] = {}
 
+    total_segs = len(segments)
+    if total_segs <= SEGMENT_SUMMARY_FULL_LIMIT:
+        llm_indices = {segment["segment_index"] for segment in segments}
+    else:
+        target = min(
+            SEGMENT_SUMMARY_SAMPLE_MAX,
+            max(
+                SEGMENT_SUMMARY_SAMPLE_MIN,
+                math.ceil(total_segs * SEGMENT_SUMMARY_SAMPLE_RATIO),
+            ),
+        )
+        positions = _evenly_spaced_indices(total_segs, target)
+        llm_indices = {segments[position]["segment_index"] for position in positions}
+
+    logger.info(
+        "Segment summaries: total=%d llm=%d snippets=%d",
+        total_segs,
+        len(llm_indices),
+        total_segs - len(llm_indices),
+    )
+
     async def _do_one(seg: dict):
         idx = seg["segment_index"]
         content = seg["content"]
+        if idx not in llm_indices:
+            results[idx] = _extractive_snippet(content)
+            if progress_callback:
+                await progress_callback(1)
+            return
+
         async with semaphore:
             try:
-                summary = await generate_segment_summary(
-                    content,
-                    api_key,
-                    base_url,
-                    model,
-                    api_format=api_format,
-                    output_language=output_language,
-                    user_id=user_id,
-                )
-                results[idx] = summary
-                logger.info(f"segment {idx} summary done ({len(summary)} chars)")
+                for attempt in range(1, SEGMENT_SUMMARY_MAX_ATTEMPTS + 1):
+                    try:
+                        summary = await generate_segment_summary(
+                            content,
+                            api_key,
+                            base_url,
+                            model,
+                            api_format=api_format,
+                            output_language=output_language,
+                            user_id=user_id,
+                        )
+                        if not summary:
+                            raise ValueError("empty summary")
+                        results[idx] = summary
+                        logger.info(f"segment {idx} summary done ({len(summary)} chars)")
+                        break
+                    except Exception as error:
+                        if (
+                            attempt < SEGMENT_SUMMARY_MAX_ATTEMPTS
+                            and _is_retryable_llm_error(error)
+                        ):
+                            await asyncio.sleep(min(8.0, 1.5 * (2 ** (attempt - 1))))
+                            continue
+                        raise
             except Exception as e:
-                logger.warning(f"segment {idx} summary failed, skipping: {e}")
+                results[idx] = _extractive_snippet(content)
+                logger.warning(f"segment {idx} summary failed, using snippet fallback: {e}")
             finally:
                 if progress_callback:
                     await progress_callback(1)
 
     await asyncio.gather(*[_do_one(s) for s in segments])
-    return results
+    return SegmentSummaryBatch(summaries=results, llm_indices=llm_indices)
 
 
 async def generate_file_summary(
@@ -270,20 +387,25 @@ async def generate_file_summary(
     api_format: str = "openai",
     output_language: str | None = None,
     user_id: str | None = None,
+    preferred_summaries: list[str] | None = None,
 ) -> dict:
     if not segment_summaries:
         return {"summary": "", "keywords": []}
 
-    if len(segment_summaries) > 20:
-        n = len(segment_summaries)
-        front = segment_summaries[:int(n * 0.4)]
-        mid_start = int(n * 0.4)
-        mid_end = int(n * 0.6)
-        middle = segment_summaries[mid_start:mid_end]
-        back = segment_summaries[int(n * 0.6):]
-        sampled = front + middle + back
-    else:
-        sampled = segment_summaries
+    sampled = _sample_summaries(
+        preferred_summaries or [], limit=20
+    )
+    if len(sampled) < 20:
+        seen = set(sampled)
+        for summary in _sample_summaries(segment_summaries, limit=20):
+            if summary not in seen:
+                sampled.append(summary)
+                seen.add(summary)
+            if len(sampled) >= 20:
+                break
+
+    if not sampled:
+        return {"summary": "", "keywords": []}
 
     numbered = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sampled))
     prompt = FILE_SUMMARY_PROMPT.format(
@@ -303,7 +425,7 @@ async def generate_file_summary(
                 base_url,
                 model,
                 api_format=api_format,
-                max_tokens=1024,
+                max_tokens=2048,
                 temperature=0.3,
                 user_id=user_id,
             )

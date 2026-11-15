@@ -2,8 +2,10 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,7 @@ from models.project import Project
 from models.user import User
 from models.workflow import Workflow
 from services.workflow_titles import ensure_unique_workflow_title
+from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger("routes.workflow")
 
@@ -47,8 +50,13 @@ class TitleUpdateRequest(BaseModel):
     title: str
 
 
+class WorkflowExportRequest(BaseModel):
+    include_citations: bool = True
+    citation_style: str = "endnote"
+    output_language: Optional[str] = None
+
+
 WORKFLOW_TERMINAL_STATUSES = {"completed", "failed", "partial", "cancelled"}
-WORKFLOW_CANCELLED_MESSAGE = "用户已停止生成"
 
 
 # ---------- routes (literal paths first) ----------
@@ -64,16 +72,16 @@ async def generate_workflow(
 
     cfg = body.custom_config or WorkflowCustomConfig()
     if not cfg.file_ids:
-        raise HTTPException(status_code=400, detail="请选择至少一个文件")
+        raise HTTPException(status_code=400, detail=ui_msg("select_at_least_one_file"))
     custom_prompt = (cfg.prompt or "").strip()
     if not custom_prompt:
-        raise HTTPException(status_code=400, detail="请输入工作流要求")
+        raise HTTPException(status_code=400, detail=ui_msg("workflow_prompt_missing"))
     workflow_type = (cfg.preset_key or "").strip()
     if not workflow_type:
-        raise HTTPException(status_code=400, detail="缺少工作流类型")
+        raise HTTPException(status_code=400, detail=ui_msg("workflow_type_missing"))
     output_language = (cfg.output_language or "").strip()
     if not output_language:
-        raise HTTPException(status_code=400, detail="缺少输出语言")
+        raise HTTPException(status_code=400, detail=ui_msg("output_language_missing"))
     result = await db.execute(
         select(File.id).where(
             File.project_id == body.project_id,
@@ -106,16 +114,16 @@ async def generate_workflow(
     redis = request.app.state.redis
     if redis is None:
         wf.status = "failed"
-        wf.error_message = "后台任务服务(Redis)不可用，无法生成报告"
+        wf.error_message = ui_msg("queue_unavailable_report")
         await db.commit()
-        raise HTTPException(status_code=503, detail="后台任务服务不可用，无法生成报告")
+        raise HTTPException(status_code=503, detail=ui_msg("queue_unavailable_report"))
 
     await redis.enqueue_job("generate_workflow_task", wf.id, output_language)
 
     return {
         "workflow_id": wf.id,
         "workflow_type": wf.workflow_type,
-        "display_name": wf.title or wf.workflow_type or "工作流",
+        "display_name": wf.title or wf.workflow_type or ui_msg("workflow_default_name"),
         "status": wf.status,
         "steps_count": 0,
         "is_finalized": wf.is_finalized,
@@ -179,20 +187,20 @@ async def cancel_workflow(
 
     if wf.status == "pending":
         wf.status = "cancelled"
-        wf.error_message = WORKFLOW_CANCELLED_MESSAGE
+        wf.error_message = ui_msg("workflow_cancelled")
         wf.finished_at = datetime.now(timezone.utc)
         for feature in wf.features or []:
             if feature.status in {"pending", "processing"}:
                 feature.status = "cancelled"
-                feature.error_message = WORKFLOW_CANCELLED_MESSAGE
+                feature.error_message = ui_msg("workflow_cancelled")
                 feature.finished_at = datetime.now(timezone.utc)
     else:
         wf.status = "cancelling"
-        wf.error_message = WORKFLOW_CANCELLED_MESSAGE
+        wf.error_message = ui_msg("workflow_cancelled")
         for feature in wf.features or []:
             if feature.status == "pending":
                 feature.status = "cancelled"
-                feature.error_message = WORKFLOW_CANCELLED_MESSAGE
+                feature.error_message = ui_msg("workflow_cancelled")
                 feature.finished_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -213,6 +221,52 @@ async def get_workflow_content(
         "citations": wf.get_citations(),
         "features": [f.to_content_dict() for f in wf.features],
     }
+
+
+@router.post("/{workflow_id}/export")
+async def export_workflow(
+    workflow_id: str,
+    body: WorkflowExportRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from services.export_service import export_service
+
+    wf = await require_workflow(db, workflow_id, current_user, with_features=True)
+
+    features = [
+        feature.to_content_dict()
+        for feature in sorted(wf.features or [], key=lambda item: item.step_index)
+    ]
+    workflow_citations = wf.get_citations()
+
+    try:
+        from services.references import attach_reference_data
+
+        await attach_reference_data(db, [workflow_citations, *(f.get("citations") or {} for f in features)])
+        docx_stream, filename = export_service.export_workflow_to_docx(
+            workflow_title=wf.title or "",
+            features=features,
+            citations=workflow_citations,
+            include_citations=body.include_citations,
+            citation_style=body.citation_style,
+            output_language=body.output_language,
+        )
+
+        encoded_filename = quote(filename)
+
+        return StreamingResponse(
+            docx_stream,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("[workflow] export failed workflow_id=%s", workflow_id)
+        raise HTTPException(status_code=500, detail="Export failed. Please try again.")
 
 
 @router.get("/{workflow_id}")
@@ -252,7 +306,7 @@ async def delete_workflow(
     current_user: User = Depends(get_current_user),
 ) -> None:
     wf = await require_workflow(db, workflow_id, current_user)
-    # SQLite 默认不开 FK 级联，显式删除子 features 避免孤儿行
+    # SQLite does not cascade foreign keys by default; delete child features explicitly to avoid orphan rows
     await db.execute(sa_delete(Feature).where(Feature.workflow_id == workflow_id))
     await db.delete(wf)
     await db.commit()

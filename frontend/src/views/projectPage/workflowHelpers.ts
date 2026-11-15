@@ -1,4 +1,5 @@
-import { locale, t } from '../../i18n'
+import { t } from '../../i18n'
+import { parseServerDate } from '../../utils/format'
 import type { WorkflowDetail, WorkflowListItem, WorkflowStatus } from '../../services/api'
 
 export type WorkflowPresetKey = 'quick_read' | 'deep_dive' | 'custom'
@@ -175,18 +176,12 @@ export function formatWorkflowProgress(workflow: WorkflowListItem | WorkflowDeta
 }
 
 export function formatWorkflowElapsed(isoString: string, nowMs: number): string {
-  const startedAt = new Date(isoString)
+  const startedAt = parseServerDate(isoString)
   const elapsedMs = Math.max(0, nowMs - startedAt.getTime())
   const elapsedSeconds = Math.floor(elapsedMs / 1000)
   const hours = Math.floor(elapsedSeconds / 3600)
   const minutes = Math.floor((elapsedSeconds % 3600) / 60)
   const seconds = elapsedSeconds % 60
-
-  if (locale.value === 'en') {
-    if (hours > 0) return `${hours}h ${minutes}m`
-    if (minutes > 0) return `${minutes}m ${seconds}s`
-    return `${seconds}s`
-  }
 
   if (hours > 0) return t('ui.elapsedHoursMinutes', { hours, minutes })
   if (minutes > 0) return t('ui.elapsedMinutesSeconds', { minutes, seconds })

@@ -79,7 +79,7 @@
           </div>
 
           <template v-else>
-            <span class="user-message-content">{{ msg.content }}</span>
+            <span class="user-message-content" dir="auto">{{ msg.content }}</span>
             <div v-if="!isExportSelectionMode" class="user-action-btns">
               <button
                 class="user-action-btn"
@@ -116,10 +116,12 @@
               <div
                 v-if="segment.type === 'body'"
                 class="assistant-body markdown-body"
+                dir="auto"
                 v-html="segment.html"
               ></div>
               <div
                 v-else
+                dir="auto"
                 v-html="segment.html"
               ></div>
             </div>
@@ -138,6 +140,14 @@
                 <path d="M17 21H7a2 2 0 01-2-2V5a2 2 0 012-2h7l5 5v11a2 2 0 01-2 2z"></path>
                 <path d="M9 15l2-2 2 2"></path>
                 <path d="M11 13v4"></path>
+              </svg>
+            </button>
+            <button class="action-btn" :data-tooltip="$t('ui.saveAsNote')" :aria-label="$t('ui.saveAsNote')" @click="emit('save-message-as-note', msg)">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <path d="M15 3v5h5"></path>
+                <path d="M12 11v6"></path>
+                <path d="M9 14h6"></path>
               </svg>
             </button>
             <button class="action-btn" disabled :data-tooltip="$t('ui.likeComingSoon')">
@@ -175,7 +185,12 @@
               </svg>
             </button>
             <span class="actions-divider">|</span>
-            <span class="agent-role-label">{{ msg.agent_role === 'analysis' ? $t('ui.analysisAssistant') : $t('ui.xiaoluo') }}</span>
+            <span
+              v-if="msg.agent_role === 'general'"
+              class="unsourced-badge"
+              :title="$t('ui.unsourcedAnswerTooltip')"
+            >{{ $t('ui.unsourcedAnswer') }}</span>
+            <span v-else class="agent-role-label">{{ msg.agent_role === 'analysis' ? $t('ui.analysisAssistant') : $t('ui.xiaoluo') }}</span>
             <span class="message-time">{{ formatMessageTime(msg.created_at) }}</span>
           </div>
         </div>
@@ -193,10 +208,12 @@
               <div
                 v-if="segment.type === 'body'"
                 class="assistant-body markdown-body"
+                dir="auto"
                 v-html="segment.html"
               ></div>
               <div
                 v-else
+                dir="auto"
                 v-html="segment.html"
               ></div>
             </div>
@@ -270,6 +287,7 @@ const emit = defineEmits<{
   'copy-user-message': [message: Message]
   'copy-message-as-text': [message: Message]
   'copy-message-as-markdown': [message: Message]
+  'save-message-as-note': [message: Message]
   'regenerate-message': [index: number]
   'enter-export-mode-with-selection': [index: number]
 }>()
@@ -461,12 +479,12 @@ function regenerateTooltip(index: number, msg: Message): string {
   align-items: center;
   justify-content: center;
   padding: 8px 0;
-  color: var(--text-tertiary, #999);
+  color: var(--text-tertiary, var(--text-disabled));
   font-size: 12px;
 }
 
 .compact-divider span {
-  background: var(--bg-secondary, #f5f5f5);
+  background: var(--bg-secondary, var(--bg-secondary));
   padding: 2px 12px;
   border-radius: 10px;
 }
@@ -475,11 +493,10 @@ function regenerateTooltip(index: number, msg: Message): string {
   position: relative;
   max-width: min(100%, max(280px, calc(100% - var(--chat-question-width-offset))));
   padding: 14px 20px;
-  background: var(--bg-main);
+  background: var(--bg-tertiary);
   border-radius: 20px 20px 4px 20px;
   color: var(--text-primary);
   line-height: 1.6;
-  letter-spacing: 0.02em;
   text-align: left;
 }
 
@@ -547,7 +564,7 @@ function regenerateTooltip(index: number, msg: Message): string {
   content: attr(data-tooltip);
   bottom: calc(100% + 6px);
   padding: 4px 8px;
-  background: #1f2937;
+  background: var(--text-primary);
   color: #fff;
   font-size: 12px;
   font-weight: 400;
@@ -560,7 +577,7 @@ function regenerateTooltip(index: number, msg: Message): string {
   bottom: calc(100% + 1px);
   width: 8px;
   height: 4px;
-  background: #1f2937;
+  background: var(--text-primary);
   clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
 }
 
@@ -730,7 +747,7 @@ function regenerateTooltip(index: number, msg: Message): string {
   content: attr(data-tooltip);
   bottom: calc(100% + 6px);
   padding: 6px 10px;
-  background: #1f2937;
+  background: var(--text-primary);
   color: #fff;
   font-size: 12px;
   font-weight: 400;
@@ -744,7 +761,7 @@ function regenerateTooltip(index: number, msg: Message): string {
   bottom: calc(100% + 1px);
   width: 10px;
   height: 5px;
-  background: #1f2937;
+  background: var(--text-primary);
   clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
 }
 
@@ -823,7 +840,7 @@ function regenerateTooltip(index: number, msg: Message): string {
   height: 14px;
   padding: 0 3px;
   margin: 0 1px;
-  background: var(--primary-light, #e3f2fd);
+  background: var(--primary-light, var(--info-soft));
   color: var(--primary-color, #667eea);
   border-radius: 7px;
   font-size: 9px;
@@ -881,11 +898,11 @@ function regenerateTooltip(index: number, msg: Message): string {
   background: var(--primary-color);
   color: white;
   transform: scale(1.15);
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+  box-shadow: var(--focus-ring);
 }
 
 .assistant-content :deep(.inline-citation.disabled) {
-  background: #e0e0e0;
+  background: var(--border-color);
   color: #9e9e9e;
   cursor: default;
   position: relative;
@@ -1163,7 +1180,7 @@ function regenerateTooltip(index: number, msg: Message): string {
   padding: 0 5px;
   gap: 2px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+  background: linear-gradient(135deg, var(--info-soft) 0%, #bbdefb 100%);
   border: 1px solid #64b5f6;
   position: relative;
 }
@@ -1191,7 +1208,7 @@ function regenerateTooltip(index: number, msg: Message): string {
 }
 
 .assistant-content :deep(.error-placeholder) {
-  color: #dc2626;
+  color: var(--error-color);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -1214,7 +1231,7 @@ function regenerateTooltip(index: number, msg: Message): string {
 }
 
 .assistant-content :deep(.system-hint.error) {
-  background-color: #fee2e2;
+  background-color: var(--error-soft);
   border: 1px solid #f87171;
   color: #991b1b;
 }
@@ -1236,5 +1253,17 @@ function regenerateTooltip(index: number, msg: Message): string {
 .action-btn.error-retry:hover:not(:disabled) {
   background-color: #fef3c7;
   color: #d97706;
+}
+
+.unsourced-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--warning-soft);
+  color: var(--warning-color);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: help;
 }
 </style>

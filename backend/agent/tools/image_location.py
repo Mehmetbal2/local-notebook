@@ -3,12 +3,11 @@ import os
 import sqlite3
 from typing import Any, Optional
 
+from paths import get_sqlite_db_path
+
 
 def get_db_path() -> str:
-    db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./local_notebook.db")
-    if "///" in db_url:
-        return db_url.split("///")[-1]
-    return "local_notebook.db"
+    return get_sqlite_db_path()
 
 
 def _int_or_none(value: Any) -> Optional[int]:

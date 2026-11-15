@@ -2,6 +2,7 @@ import axios from 'axios'
 import type { Project, FileInfo, Session, ToolExecuting, FileContent, Feature, FeatureBlock, ImageFileInfo } from '../types'
 import { getToken, clearTokens } from './auth'
 import { getModelOutputLanguage, t } from '../i18n'
+import { UI_LANGUAGE_HEADER, currentUiLanguage } from './uiLanguageHeader'
 
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
@@ -19,6 +20,7 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
+  config.headers[UI_LANGUAGE_HEADER] = currentUiLanguage()
   return config
 })
 
@@ -323,6 +325,179 @@ export async function deleteFile(fileId: string): Promise<void> {
   await api.delete(`/api/files/${fileId}`)
 }
 
+/** Stop parsing the given files; returns the ids that were actually pending or processing. */
+export async function cancelFilesProcessing(fileIds: string[]): Promise<{ stopped: string[] }> {
+  const response = await api.post('/api/files/cancel/batch', { file_ids: fileIds })
+  return response.data
+}
+
+/** Delete several files at once; running parses are stopped first. */
+export async function deleteFilesBatch(fileIds: string[]): Promise<{ deleted: string[] }> {
+  const response = await api.post('/api/files/delete/batch', { file_ids: fileIds }, { timeout: 120000 })
+  return response.data
+}
+
+export interface FileNameSuggestion {
+  id: string
+  file_name: string
+  author: string
+  year: string
+  title: string
+  confidence: 'high' | 'medium' | 'low'
+  note: string
+}
+
+/** Ask the model for an "Author - Year - Title" name; nothing is renamed until the user confirms. */
+export async function suggestFileName(fileId: string, outputLanguage?: string): Promise<FileNameSuggestion> {
+  const response = await api.post(`/api/files/${fileId}/name-suggestion`, { output_language: outputLanguage }, { timeout: 180000 })
+  return response.data
+}
+
+export interface WebSourceResult {
+  url: string
+  title: string
+  snippet: string
+  domain: string
+  published_date: string
+  engines: string[]
+  kind: 'pdf' | 'page'
+  reason: string
+  imported: boolean
+  /** full: a PDF can be downloaded; oa_page: a free page; abstract: only the publisher page; page: web page */
+  access?: 'full' | 'oa_page' | 'abstract' | 'page'
+  doi?: string
+  pdf_url?: string
+  landing_url?: string
+  authors?: string[]
+  venue?: string
+}
+
+export interface WebSourceImportItem {
+  url: string
+  title?: string
+  pdf_url?: string
+  landing_url?: string
+  doi?: string
+  authors?: string[]
+  published_date?: string
+}
+
+export interface WebSourceSearchResponse {
+  scope: 'web' | 'academic'
+  queries: string[]
+  results: WebSourceResult[]
+}
+
+export interface WebSourceImportResponse {
+  imported: FileInfo[]
+  failed: { url: string; title: string; reason: string }[]
+  skipped: { url: string; title: string }[]
+  abstract_only?: string[]
+}
+
+/** Find sources on the web for a topic (SearXNG + model ranking). Nothing is imported. */
+export async function searchWebSources(
+  projectId: string,
+  query: string,
+  scope: 'web' | 'academic',
+  outputLanguage?: string
+): Promise<WebSourceSearchResponse> {
+  const response = await api.post(
+    `/api/projects/${projectId}/web-sources/search`,
+    { query, scope, output_language: outputLanguage },
+    { timeout: 180000 }
+  )
+  return response.data
+}
+
+export interface SearchSnippet {
+  text: string
+  ranges: number[][]
+  page?: number
+  /** Report section the passage comes from (report matches only) */
+  section?: string
+}
+
+export interface SearchHit {
+  id: string
+  name_match: boolean
+  count: number
+  snippets: SearchSnippet[]
+}
+
+/** Search inside the project's source texts and/or its notes and results. */
+export async function searchProject(
+  projectId: string,
+  query: string,
+  target: 'all' | 'files' | 'features' = 'all'
+): Promise<{ query: string; files?: SearchHit[]; features?: SearchHit[]; workflows?: SearchHit[] }> {
+  const response = await api.get(`/api/projects/${projectId}/search`, { params: { q: query, target } })
+  return response.data
+}
+
+/** Start a background deep research; its cited report appears among the project's results. */
+export async function startDeepResearch(
+  projectId: string,
+  query: string,
+  scope: 'web' | 'academic',
+  outputLanguage?: string
+): Promise<FeatureListItem> {
+  const response = await api.post(`/api/projects/${projectId}/web-sources/deep-research`, {
+    query,
+    scope,
+    output_language: outputLanguage,
+  })
+  return response.data
+}
+
+/** Second step of a search: the model orders the shown results and explains each one. */
+export async function rankWebSources(
+  projectId: string,
+  query: string,
+  scope: 'web' | 'academic',
+  items: WebSourceResult[],
+  outputLanguage?: string
+): Promise<{ ok: boolean; order: { url: string; reason: string }[] }> {
+  const response = await api.post(
+    `/api/projects/${projectId}/web-sources/rank`,
+    {
+      query,
+      scope,
+      output_language: outputLanguage,
+      items: items.map(r => ({
+        url: r.url,
+        title: r.title,
+        snippet: r.snippet,
+        venue: r.venue,
+        domain: r.domain,
+        published_date: r.published_date,
+      })),
+    },
+    { timeout: 300000 }
+  )
+  return response.data
+}
+
+/** Download the chosen links (PDF or page text) and add them as sources. */
+export async function importWebSources(
+  projectId: string,
+  items: WebSourceImportItem[],
+  outputLanguage?: string
+): Promise<WebSourceImportResponse> {
+  const response = await api.post(
+    `/api/projects/${projectId}/web-sources/import`,
+    { items, output_language: outputLanguage },
+    { timeout: 300000 }
+  )
+  return response.data
+}
+
+/** Process a stopped or failed file again from the start. */
+export async function reprocessFile(fileId: string, outputLanguage?: string): Promise<FileInfo> {
+  const response = await api.post(`/api/files/${fileId}/reprocess`, { output_language: outputLanguage })
+  return response.data
+}
+
 export async function updateFile(fileId: string, data: { file_name: string }): Promise<FileInfo> {
   const response = await api.put(`/api/files/${fileId}`, data)
   return response.data
@@ -522,7 +697,9 @@ export function chatStream(
   fileIds: string[] | undefined,
   callbacks: ChatStreamCallbacks,
   enableWebSearch: boolean = false,
-  agentRole: AgentRole = 'default'
+  agentRole: AgentRole = 'default',
+  /** No sources selected: answer from general knowledge, without citations. */
+  generalChat: boolean = false
 ): () => void {
   const controller = new AbortController()
   const token = getToken()
@@ -539,7 +716,8 @@ export function chatStream(
       file_ids: fileIds,
       enable_web_search: enableWebSearch,
       agent_role: agentRole,
-      output_language: getModelOutputLanguage()
+      output_language: getModelOutputLanguage(),
+      general_chat: generalChat
     }),
     signal: controller.signal
   })
@@ -724,12 +902,14 @@ export function editMessageAndRegenerate(
   fileIds: string[] | undefined,
   callbacks: ChatStreamCallbacks,
   enableWebSearch: boolean = false,
-  agentRole: AgentRole = 'default'
+  agentRole: AgentRole = 'default',
+  /** No sources selected: answer from general knowledge, without citations. */
+  generalChat: boolean = false
 ): () => void {
   const controller = new AbortController()
   const token = getToken()
 
-  console.log(`📡 [editMessageAndRegenerate] API 调用参数:`, {
+  console.log(`📡 [editMessageAndRegenerate] API call parameters:`, {
     sessionId,
     messageId,
     contentLength: content?.length,
@@ -750,7 +930,8 @@ export function editMessageAndRegenerate(
       file_ids: fileIds,
       enable_web_search: enableWebSearch,
       agent_role: agentRole,
-      output_language: getModelOutputLanguage()
+      output_language: getModelOutputLanguage(),
+      general_chat: generalChat
     }),
     signal: controller.signal
   })
@@ -936,8 +1117,11 @@ export interface FeatureListItem {
   display_name?: string
   title: string | null
   prompt?: string | null
+  note_source?: 'chat' | 'manual' | null
   status: 'pending' | 'processing' | 'completed' | 'failed'
   error_message: string | null
+  /** What a running job is doing now (deep research) */
+  progress?: string | null
   created_at: string
   started_at: string | null
   finished_at: string | null
@@ -958,6 +1142,7 @@ export async function getFeaturesStatusBatch(featureIds: string[]): Promise<{
     display_name?: string
     prompt?: string | null
     title?: string | null
+    progress?: string | null
   }>
 }> {
   const response = await api.post('/api/features/status/batch', { feature_ids: featureIds })
@@ -1021,7 +1206,42 @@ export async function deleteFeature(featureId: string): Promise<void> {
   await api.delete(`/api/features/${featureId}`)
 }
 
-export async function updateFeature(featureId: string, data: { title: string }): Promise<{ id: string; title: string; updated_at: string }> {
+/** Save a chat answer (by message id) or free-form markdown as a note in the project. */
+export async function createNote(
+  projectId: string,
+  data: { messageId?: string; content?: string; title?: string }
+): Promise<FeatureListItem> {
+  const response = await api.post('/api/features/notes', {
+    project_id: projectId,
+    message_id: data.messageId,
+    content: data.content,
+    title: data.title,
+  })
+  return response.data
+}
+
+/** Re-run a quick tool in place with the sources and prompt it was created with. */
+export async function regenerateFeature(featureId: string): Promise<FeatureListItem> {
+  const response = await api.post(`/api/features/${featureId}/regenerate`)
+  return response.data
+}
+
+export interface SourceReference {
+  name: string
+  file_type: string
+  page: number | null
+  volume: number | null
+  page_kind: 'pdf' | 'printed' | null
+  sentence: string
+}
+
+/** Work name, page and a verbatim sentence for each citation of a result or note (for downloads). */
+export async function getFeatureReferences(featureId: string): Promise<Record<string, SourceReference>> {
+  const response = await api.get(`/api/features/${featureId}/references`)
+  return response.data?.references || {}
+}
+
+export async function updateFeature(featureId: string, data: { title?: string; content?: string }): Promise<{ id: string; title: string; updated_at: string }> {
   const response = await api.put(`/api/features/${featureId}`, data)
   return response.data
 }
@@ -1071,7 +1291,15 @@ export function getAssetUrl(path: string): string {
     return path
   }
 
-  return `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
+  const base = `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
+  if (path.startsWith('/api/')) {
+    const token = getToken()
+    if (token && !base.includes('token=')) {
+      const sep = base.includes('?') ? '&' : '?'
+      return `${base}${sep}token=${encodeURIComponent(token)}`
+    }
+  }
+  return base
 }
 
 
@@ -1865,13 +2093,15 @@ export async function exportWorkflowToWord(
   options: {
     include_citations?: boolean
     citation_style?: CitationStyle
+    output_language?: string
   } = {}
 ): Promise<{ blob: Blob; filename: string }> {
   const response = await api.post(
     `/api/workflows/${workflowId}/export`,
     {
       include_citations: options.include_citations ?? true,
-      citation_style: options.citation_style ?? 'inline'
+      citation_style: options.citation_style ?? 'inline',
+      output_language: options.output_language ?? getModelOutputLanguage()
     },
     {
       responseType: 'blob',
@@ -1906,16 +2136,30 @@ export async function exportWorkflowToWord(
   }
 }
 
+/** Speech to text for the chat box (uses the speech recognition service from Settings). */
+export async function transcribeDictation(audio: Blob): Promise<string> {
+  const form = new FormData()
+  const extension = audio.type.includes('wav') ? 'wav' : audio.type.includes('mp4') ? 'm4a' : 'webm'
+  form.append('file', audio, `dictation.${extension}`)
+  const response = await api.post('/api/chat/transcribe', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000,
+  })
+  return response.data?.text || ''
+}
+
 export async function exportChatMessagesToWord(
   sessionId: string,
   userMessageIds: string[] | null = null,
-  includeCitations: boolean = true
+  includeCitations: boolean = true,
+  outputLanguage: string = getModelOutputLanguage()
 ): Promise<{ blob: Blob; filename: string }> {
   const response = await api.post(
     `/api/sessions/${sessionId}/export`,
     {
       user_message_ids: userMessageIds,
-      include_citations: includeCitations
+      include_citations: includeCitations,
+      output_language: outputLanguage
     },
     {
       responseType: 'blob',
@@ -1949,31 +2193,32 @@ export async function exportChatMessagesToWord(
 
 
 export interface SettingsMap {
-  bailian_api_key?: string
-  llm_source?: string
-  llm_bailian_model?: string
   llm_api_key?: string
   llm_base_url?: string
   llm_model?: string
   llm_api_format?: string
   easy_task_llm?: string
   easy_task_llm_verified?: string
-  vlm_source?: string
-  vlm_bailian_model?: string
   vlm_api_key?: string
   vlm_base_url?: string
   vlm_model?: string
   embedding_source?: string
-  embedding_bailian_model?: string
   embedding_model?: string
   embedding_api_key?: string
   embedding_base_url?: string
-  mineru_source?: string
-  mineru_base_url?: string
-  mineru_api_key?: string
+  ocr_base_url?: string
+  ocr_api_key?: string
+  ocr_model?: string
   funasr_base_url?: string
+  funasr_api_key?: string
+  funasr_model?: string
   funasr_verified?: string
-  bocha_api_key?: string
+  tts_base_url?: string
+  tts_api_key?: string
+  tts_model?: string
+  tts_voice?: string
+  tts_verified?: string
+  searxng_base_url?: string
   [key: string]: string | undefined
 }
 

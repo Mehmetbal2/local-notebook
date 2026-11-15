@@ -1,12 +1,14 @@
 import logging
 import os
 from collections.abc import Iterable
+from pathlib import Path
+from paths import get_data_dir, get_milvus_uri
 
 logger = logging.getLogger(__name__)
 
-# Standalone Milvus 通过 URI 连接(docker 模式 docker-compose 注入,
-# 本地裸跑用 docker compose up -d milvus 后通过 localhost:19530 连接)
-MILVUS_URI = os.getenv("MILVUS_URI", "http://localhost:19530")
+# Supports both local Milvus Lite file (default: local-notebook-data/milvus.db)
+# and standalone Milvus server (e.g. http://localhost:19530).
+MILVUS_URI = get_milvus_uri()
 
 # These constants define the Milvus data layout. Changing any of them requires
 # an explicit vector-store migration or full re-index.
@@ -21,11 +23,42 @@ PQ_NBITS = 8
 _client = None
 
 
-def _get_client():
-    global _client
-    if _client is None:
+def _create_milvus_client(uri: str):
+    is_remote = uri.startswith(("http://", "https://"))
+    saved_env = os.environ.get("MILVUS_URI")
+    try:
+        if not is_remote:
+            os.environ["MILVUS_URI"] = ""
+            import pymilvus.settings
+            pymilvus.settings.Config.MILVUS_URI = ""
+            Path(uri).parent.mkdir(parents=True, exist_ok=True)
         from pymilvus import MilvusClient
-        _client = MilvusClient(uri=MILVUS_URI)
+        return MilvusClient(uri=uri)
+    finally:
+        if saved_env is not None:
+            os.environ["MILVUS_URI"] = saved_env
+
+
+def _get_client():
+    global _client, MILVUS_URI
+    if _client is None:
+        MILVUS_URI = get_milvus_uri()
+        try:
+            _client = _create_milvus_client(MILVUS_URI)
+        except Exception as exc:
+            fallback_uri = (get_data_dir() / "milvus.db").resolve().as_posix()
+            if MILVUS_URI.startswith(("http://", "https://")) and MILVUS_URI != fallback_uri:
+                logger.warning(
+                    "Milvus server at %s unavailable (%s); falling back to local Milvus Lite at %s",
+                    MILVUS_URI,
+                    exc,
+                    fallback_uri,
+                )
+                os.environ["MILVUS_URI"] = fallback_uri
+                MILVUS_URI = fallback_uri
+                _client = _create_milvus_client(fallback_uri)
+            else:
+                raise
     return _client
 
 
@@ -92,28 +125,60 @@ def _pq_m(dim: int) -> int:
     return 1
 
 
+def _effective_vector_index_type() -> str:
+    if not MILVUS_URI.startswith(("http://", "https://")) and VECTOR_INDEX_TYPE == "IVF_PQ":
+        return "IVF_FLAT"
+    return VECTOR_INDEX_TYPE
+
+
 def _add_vector_index(index_params, dim: int) -> None:
+    index_type = _effective_vector_index_type()
     params: dict[str, int] = {"nlist": IVF_NLIST}
-    if VECTOR_INDEX_TYPE == "IVF_PQ":
+    if index_type == "IVF_PQ":
         params.update({"m": _pq_m(dim), "nbits": PQ_NBITS})
 
     index_params.add_index(
         field_name="embedding",
-        index_type=VECTOR_INDEX_TYPE,
+        index_type=index_type,
         metric_type="L2",
         params=params,
     )
 
 
 def _add_filter_indexes(index_params) -> None:
+    if not MILVUS_URI.startswith(("http://", "https://")):
+        return
     index_params.add_index(field_name="project_id", index_type="INVERTED")
     index_params.add_index(field_name="file_id", index_type="INVERTED")
+
+
+def _ensure_collection_loaded(client, name: str) -> bool:
+    if not client.has_collection(name):
+        return False
+    try:
+        client.load_collection(name)
+    except Exception as exc:
+        if "IVF_PQ" in str(exc) or isinstance(exc, NotImplementedError):
+            try:
+                client.drop_index(collection_name=name, index_name="embedding")
+                index_params = client.prepare_index_params()
+                _add_vector_index(index_params, dim=0)
+                client.create_index(collection_name=name, index_params=index_params)
+                client.load_collection(name)
+                logger.info(
+                    "Migrated collection '%s' vector index from IVF_PQ to %s",
+                    name,
+                    _effective_vector_index_type(),
+                )
+            except Exception as migrate_exc:
+                logger.warning("Failed to migrate vector index on '%s': %s", name, migrate_exc)
+    return True
 
 
 def ensure_collection(project_id: str, dim: int) -> None:
     client = _get_client()
     name = TEXT_COLLECTION
-    if client.has_collection(name):
+    if _ensure_collection_loaded(client, name):
         return
 
     from pymilvus import DataType
@@ -147,7 +212,7 @@ def ensure_collection(project_id: str, dim: int) -> None:
 def ensure_image_collection(project_id: str, dim: int) -> None:
     client = _get_client()
     name = IMAGE_COLLECTION
-    if client.has_collection(name):
+    if _ensure_collection_loaded(client, name):
         return
 
     from pymilvus import DataType
@@ -181,6 +246,7 @@ def upsert_chunks(project_id: str, chunks: list[dict]) -> None:
     if not chunks:
         return
     client = _get_client()
+    _ensure_collection_loaded(client, TEXT_COLLECTION)
     data = [{**chunk, "project_id": project_id} for chunk in chunks]
     client.upsert(collection_name=TEXT_COLLECTION, data=data)
 
@@ -189,6 +255,7 @@ def upsert_image_chunks(project_id: str, chunks: list[dict]) -> None:
     if not chunks:
         return
     client = _get_client()
+    _ensure_collection_loaded(client, IMAGE_COLLECTION)
     data = [{**chunk, "project_id": project_id} for chunk in chunks]
     client.upsert(collection_name=IMAGE_COLLECTION, data=data)
 
@@ -196,13 +263,13 @@ def upsert_image_chunks(project_id: str, chunks: list[dict]) -> None:
 def delete_by_file(project_id: str, file_id: str) -> None:
     client = _get_client()
 
-    if client.has_collection(TEXT_COLLECTION):
+    if _ensure_collection_loaded(client, TEXT_COLLECTION):
         client.delete(
             collection_name=TEXT_COLLECTION,
             filter=_project_file_filter(project_id, file_id),
         )
 
-    if client.has_collection(IMAGE_COLLECTION):
+    if _ensure_collection_loaded(client, IMAGE_COLLECTION):
         client.delete(
             collection_name=IMAGE_COLLECTION,
             filter=_project_file_filter(project_id, file_id),
@@ -213,7 +280,7 @@ def delete_project_vectors(project_id: str) -> None:
     client = _get_client()
 
     for name in shared_collection_names():
-        if client.has_collection(name):
+        if _ensure_collection_loaded(client, name):
             client.delete(collection_name=name, filter=_project_filter(project_id))
             logger.info("Deleted Milvus vectors from '%s' for project %s", name, project_id)
 
@@ -235,7 +302,7 @@ def delete_projects_vectors(project_ids: Iterable[str]) -> None:
     client = _get_client()
     filter_expr = _in_expr("project_id", ids)
     for name in shared_collection_names():
-        if client.has_collection(name):
+        if _ensure_collection_loaded(client, name):
             client.delete(collection_name=name, filter=filter_expr)
 
 
@@ -248,7 +315,7 @@ def delete_vectors_not_in_projects(active_project_ids: Iterable[str]) -> None:
         else 'project_id != ""'
     )
     for name in shared_collection_names():
-        if client.has_collection(name):
+        if _ensure_collection_loaded(client, name):
             client.delete(collection_name=name, filter=filter_expr)
 
 
@@ -261,7 +328,7 @@ def search(
     client = _get_client()
     name = TEXT_COLLECTION
 
-    if not client.has_collection(name):
+    if not _ensure_collection_loaded(client, name):
         return []
 
     results = client.search(
@@ -296,7 +363,7 @@ def search_images(
     client = _get_client()
     name = IMAGE_COLLECTION
 
-    if not client.has_collection(name):
+    if not _ensure_collection_loaded(client, name):
         return []
 
     results = client.search(
@@ -326,7 +393,7 @@ def get_by_ids(project_id: str, segment_ids: list[str]) -> list[dict]:
         return []
     client = _get_client()
     name = TEXT_COLLECTION
-    if not client.has_collection(name):
+    if not _ensure_collection_loaded(client, name):
         return []
 
     results = client.query(

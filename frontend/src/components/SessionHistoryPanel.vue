@@ -121,9 +121,10 @@
 </template>
 
 <script setup lang="ts">
+import { useEscapeClose } from '../composables/useEscapeClose'
 import { computed } from 'vue'
 import type { Session } from '../types'
-import { formatRelativeTime as formatLocalizedRelativeTime } from '../utils/format'
+import { formatRelativeTime as formatLocalizedRelativeTime, parseServerDate } from '../utils/format'
 
 const props = defineProps<{
   visible: boolean
@@ -132,7 +133,7 @@ const props = defineProps<{
   loading?: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'close'): void
   (e: 'select', sessionId: string): void
   (e: 'delete', sessionId: string, title: string): void
@@ -146,7 +147,7 @@ const groupedSessions = computed(() => {
   const older: Session[] = []
 
   for (const session of props.sessions) {
-    const updated = new Date(session.updated_at)
+    const updated = parseServerDate(session.updated_at)
     const diffMs = now.getTime() - updated.getTime()
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
 
@@ -165,6 +166,8 @@ function formatRelativeTime(dateStr: string): string {
     fallback: 'month',
   })
 }
+
+useEscapeClose(() => props.visible, () => emit('close'))
 </script>
 
 <style scoped>
@@ -331,7 +334,7 @@ function formatRelativeTime(dateStr: string): string {
 
 .delete-btn:hover {
   background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  color: var(--error-color);
 }
 
 .panel-enter-active,

@@ -35,7 +35,7 @@ local-Notebook is designed around these constraints:
 |---|---|---|
 | [backend/](./backend) | FastAPI service: API routes, agent chat, citation parsing, vector retrieval, ARQ tasks | [backend/README.md](./backend/README.md) |
 | [frontend/](./frontend) | Vue 3 + Vite app: project management, chat UI, settings, source navigation | [frontend/README.md](./frontend/README.md) |
-| [services/](./services) | Optional local model services: Embedding / MinerU / FunASR for offline deployments | [services/README.md](./services/README.md) |
+| [services/](./services) | Optional local model services: Embedding / FunASR for offline deployments; SearXNG for web search | [services/README.md](./services/README.md), [services/searxng/README.md](./services/searxng/README.md) |
 
 ## Quick Start
 
@@ -68,13 +68,40 @@ The first `--build` usually takes 10-25 minutes. This is intentional: the projec
 
 ## Configuration
 
-Open **Settings** in the frontend to configure LLM / Embedding / MinerU / FunASR. Settings take effect immediately without restarting services.
+Open **Settings** in the frontend to configure LLM / Embedding / OCR / FunASR. Settings take effect immediately without restarting services.
 
 ![Settings screenshot](./docs/screenshots/setting-en.png)
 
-Recommended path: first use a cloud API such as Alibaba Cloud Bailian or another OpenAI-compatible provider to validate the workflow. Then switch components one by one to local services under [services/](./services), such as Ollama / vLLM / local Embedding / MinerU / FunASR, for end-to-end offline operation.
+Recommended path: first use a cloud API such as Alibaba Cloud Bailian or another OpenAI-compatible provider to validate the workflow. Then switch components one by one to local services under [services/](./services), such as Ollama / vLLM / local Embedding / FunASR, for end-to-end offline operation.
 
 > **Embedding is the exception**: changing the Embedding model changes vector dimensions and semantic space. Existing indexed vectors become invalid after switching Embedding, so projects must be deleted, files uploaded again, and indexes rebuilt. Choose the Embedding service before bulk uploads.
+
+## Web Research
+
+Web search runs on a local [SearXNG](https://github.com/searxng/searxng) instance in Docker
+(OrbStack on macOS, Docker Desktop on Windows/Linux). `./start.sh` starts it on
+`http://127.0.0.1:8888` when Docker is available; no API key is needed. See
+[services/searxng/README.md](./services/searxng/README.md).
+
+- **Chat and reports**: the `web_search` tool reads the text of the top pages (or the free PDF of a
+  scholarly hit), not only the snippets.
+- **Add source → Search the web**, with *Web* or *Academic* scope:
+  - *Quick*: results appear at once, tagged **Full text / Open access / Abstract only**; the model
+    then orders them with a one-line reason. Chosen items are imported as sources — PDFs when a
+    free copy exists (found through OpenAlex / Semantic Scholar), otherwise the page text with its
+    address and access date. Works with author and year are named "Author - Year - Title".
+  - *Deep research*: runs in the background (5–15 min). The topic is split into sub-questions,
+    20–30 sources are read in full, gaps are searched again, and a cited report is written into the
+    results panel. The sources it read can be added to the project from the report.
+    If the model fails while writing, the sources are kept and *Regenerate* only rewrites the report.
+
+## Finding Sources, Notes and Results
+
+Both side panels have a search box. Titles are filtered as you type; *Search content too* also
+searches the text of sources, notes, results and report sections, with highlighted passages.
+Matching ignores case, diacritics and apostrophes ("maverdi" finds "Mâverdî", Arabic matches with
+or without vowel marks). In the sources panel, *Select found* / *Select only these* make chat and
+generation work with just the sources you found.
 
 ## Data Persistence
 

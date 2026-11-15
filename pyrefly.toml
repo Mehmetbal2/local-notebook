@@ -1,0 +1,30 @@
+search-path = [
+  "backend",
+  "backend/packages",
+  "services/embedding",
+  "services/funasr",
+]
+site-package-path = [
+  ".venv/lib/python3.13/site-packages",
+]
+python-interpreter-path = ".venv/bin/python"
+python-version = "3.13"
+
+[errors]
+missing-attribute = false
+bad-typed-dict-key = false
+bad-argument-type = false
+unsupported-operation = false
+unknown-name = false
+bad-assignment = false
+bad-return = false
+missing-argument = false
+redefinition = false
+no-matching-overload = false
+bad-context-manager = false
+unbound-name = false
+bad-index = false
+unexpected-keyword = false
+
+
+

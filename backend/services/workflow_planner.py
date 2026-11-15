@@ -1,6 +1,6 @@
-"""Plan 总模型：根据源材料 + 用户要求，动态规划报告栏目。
+"""Report planner: plans the report sections from the source material and the user's requirements.
 
-输出结构化的 steps 列表，交给后台任务逐栏目用 while-loop agent 生成。
+It outputs a structured steps list; the background task then generates each section with the while-loop agent.
 """
 
 import json
@@ -24,10 +24,11 @@ from kosong.message import Message
 from kosong.tooling.simple import SimpleToolset
 from services.llm_provider import create_llm_chat_provider
 from services.usage_service import record_model_usage
+from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger("service.workflow_planner")
 
-# 单次结构化规划调用；规划可能包含多步 JSON，reasoning 模型需要更大输出预算。
+# One structured planning call; the plan may contain multi-step JSON, so reasoning models need a larger output budget.
 _PLANNER_MAX_TOKENS = 8192
 _TITLE_MAX_TOKENS = 1536
 _PLANNER_RAW_LOG_LIMIT = 8000
@@ -237,7 +238,7 @@ def _repair_unescaped_json_string_quotes(text: str) -> str:
     """Escape common model-produced quotes inside JSON string values.
 
     LLMs often return fenced JSON with natural-language values such as
-    `"instruction": "说明"黑盒"方案"`. Strict JSON rejects those inner quotes,
+    `"instruction": "explain the "black box" approach"`. Strict JSON rejects those inner quotes,
     even though the surrounding object is otherwise usable.
     """
     out: list[str] = []
@@ -281,17 +282,17 @@ async def generate_workflow_title(
     user_id: str | None = None,
     cancellation_check: Optional[CancellationCheck] = None,
 ) -> str:
-    """根据用户要求和所选来源生成 workflow 标题。"""
+    """Generate the workflow title from the user's requirements and the selected sources."""
     api_key, base_url, model, api_format = await config.resolve_llm_provider_config()
     if not api_key or not model:
-        raise RuntimeError("LLM 未配置，无法生成报告标题")
+        raise RuntimeError(ui_msg("report_title_llm_missing"))
 
     user_req = (custom_prompt or "").strip()
     if not user_req:
-        raise ValueError("缺少工作流要求，无法生成报告标题")
+        raise ValueError(ui_msg("report_title_prompt_missing"))
     title_language = (output_language or "").strip()
     if not title_language:
-        raise ValueError("缺少输出语言，无法生成报告标题")
+        raise ValueError(ui_msg("report_title_language_missing"))
 
     project_name = ""
     source_overview = ""
@@ -347,12 +348,12 @@ async def generate_workflow_title(
         logger.warning("[planner] title generation returned empty response attempt=%d/%d", attempt, _TITLE_MAX_ATTEMPTS)
         retry_note = "The previous attempt returned empty content. You must output a non-empty title.\n\n"
 
-    raise RuntimeError(f"报告标题生成失败，已尝试 {_TITLE_MAX_ATTEMPTS} 次: 模型返回空标题")
+    raise RuntimeError(ui_msg("report_title_empty", attempts=_TITLE_MAX_ATTEMPTS))
 
 
 async def _build_planner_tools(citation_state: CitationState):
     tools = []
-    ws_enabled, _, _ = await config.resolve_web_search_config()
+    ws_enabled, _ = await config.resolve_web_search_config()
     for tool_cls in SOURCE_TOOL_CLASSES:
         if tool_cls.name == TOOL_WEB_SEARCH and not ws_enabled:
             continue
@@ -361,12 +362,7 @@ async def _build_planner_tools(citation_state: CitationState):
             continue
         if tool_cls.name == TOOL_WEB_SEARCH:
             from agent.tools.web_search import WebSearchTool
-            _, ws_key, ws_base_url = await config.resolve_web_search_config()
-            tools.append(WebSearchTool(
-                citation_state=citation_state,
-                api_key=ws_key or "",
-                base_url=ws_base_url or "",
-            ))
+            tools.append(await WebSearchTool.create(citation_state))
         else:
             tools.append(tool_impl(citation_state=citation_state))
     return tools
@@ -454,26 +450,37 @@ async def _gather_source_overview(
     summary_chars: int = 300,
     max_files: Optional[int] = None,
 ) -> tuple[str, str]:
-    """返回 (project_name, source overview text)。"""
+    """Return (project_name, source overview text)."""
     from database import AsyncSessionLocal
     from models.file import File
     from models.project import Project
 
     async with AsyncSessionLocal() as db:
         project = await db.get(Project, project_id)
-        project_name = project.name if project else "未命名项目"
+        project_name = project.name if project else "Untitled project"
 
         query = (
             select(File)
             .where(File.project_id == project_id, File.status == "ready")
             .order_by(File.created_at.asc())
         )
+        total_ready = len(list((await db.execute(query)).scalars().all()))
         if file_ids:
             query = query.where(File.id.in_(file_ids))
         result = await db.execute(query)
         files = list(result.scalars().all())
 
-    if project and project.summary:
+    # The project summary and name describe every source in the project. When the user
+    # picked only some of them, they would pull unselected works into the plan and title.
+    subset = bool(file_ids) and len(files) < total_ready
+    if subset:
+        project_name = "(only the selected sources below are in scope)"
+        lines = [
+            "Scope: the user selected only the source files listed below. Other files in the project "
+            "are out of scope: do not plan around, name or title the report after them.",
+            "",
+        ]
+    elif project and project.summary:
         lines = [f"Project summary: {project.summary}", ""]
     else:
         lines = []
@@ -590,8 +597,8 @@ def _parse_json_object(raw: str, preferred_keys: tuple[str, ...] = ()) -> Dict[s
 
     if preferred_keys:
         keys = ", ".join(preferred_keys)
-        raise ValueError(f"规划结果中未找到包含 {keys} 的完整 JSON object")
-    raise ValueError("规划结果中未找到 JSON object")
+        raise ValueError(ui_msg("plan_no_json_keys", keys=keys))
+    raise ValueError(ui_msg("plan_no_json"))
 
 
 def _extract_dependency_items(parsed: Dict[str, Any]) -> Any:
@@ -720,10 +727,10 @@ async def plan_workflow(
     user_id: str | None = None,
     cancellation_check: Optional[CancellationCheck] = None,
 ) -> Dict[str, Any]:
-    """规划报告。返回 {"steps": [...]}。"""
+    """Plan the report. Returns {"steps": [...]}."""
     api_key, base_url, model, api_format = await config.resolve_llm_provider_config()
     if not api_key or not model:
-        raise RuntimeError("LLM 未配置，无法规划报告")
+        raise RuntimeError(ui_msg("plan_llm_missing"))
 
     if cancellation_check:
         await cancellation_check()
@@ -733,13 +740,13 @@ async def plan_workflow(
 
     user_req = (custom_prompt or "").strip()
     if not user_req:
-        raise ValueError("缺少工作流要求，无法规划报告")
+        raise ValueError(ui_msg("plan_prompt_missing"))
     required_language = (output_language or "").strip()
     if not required_language:
-        raise ValueError("缺少输出语言，无法规划报告")
+        raise ValueError(ui_msg("plan_language_missing"))
     report_title = (report_title or "").strip()
     if not report_title:
-        raise ValueError("缺少报告标题，无法规划报告")
+        raise ValueError(ui_msg("plan_title_missing"))
 
     structure_prompt = f"""Project name: {project_name}
 
@@ -797,7 +804,7 @@ Plan the report section structure first. Use tools first if the source overview 
             logger.warning("[planner] structure attempt %d/%d failed project=%s: %s", attempt, _PLANNER_MAX_ATTEMPTS, project_id, e)
             _log_planner_raw_response(raw, level=logging.WARNING)
             if attempt >= _PLANNER_MAX_ATTEMPTS:
-                raise RuntimeError(f"规划结构失败，已尝试 {_PLANNER_MAX_ATTEMPTS} 次: {e}") from e
+                raise RuntimeError(ui_msg("plan_structure_failed", attempts=_PLANNER_MAX_ATTEMPTS, error=e)) from e
             history.append(Message(
                 role="user",
                 content=_build_json_correction_message(e, _STRUCTURE_OUTPUT_REQUIREMENTS.strip()),
@@ -846,7 +853,7 @@ Now plan generation prerequisites between these steps.
             logger.warning("[planner] dependency attempt %d/%d failed project=%s: %s", attempt, _PLANNER_MAX_ATTEMPTS, project_id, e)
             _log_planner_raw_response(raw, level=logging.WARNING)
             if attempt >= _PLANNER_MAX_ATTEMPTS:
-                raise RuntimeError(f"规划依赖失败，已尝试 {_PLANNER_MAX_ATTEMPTS} 次: {e}") from e
+                raise RuntimeError(ui_msg("plan_dependency_failed", attempts=_PLANNER_MAX_ATTEMPTS, error=e)) from e
             dependency_history.append(Message(
                 role="user",
                 content=_build_json_correction_message(e, _DEPENDENCY_OUTPUT_REQUIREMENTS.strip()),
@@ -860,7 +867,7 @@ Now plan generation prerequisites between these steps.
                 await cancellation_check()
             plan = _validate_full_plan(plan, required_language)
             logger.info(
-                "[planner] project=%s 规划出 %d 个栏目",
+                "[planner] project=%s planned %d sections",
                 project_id,
                 len(plan["steps"]),
             )
@@ -876,7 +883,7 @@ Now plan generation prerequisites between these steps.
             last_error = e
             logger.warning("[planner] final validation attempt %d/%d failed project=%s: %s", attempt, _PLANNER_MAX_ATTEMPTS, project_id, e)
             if attempt >= _PLANNER_MAX_ATTEMPTS:
-                raise RuntimeError(f"规划最终校验失败，已尝试 {_PLANNER_MAX_ATTEMPTS} 次: {e}") from e
+                raise RuntimeError(ui_msg("plan_validation_failed", attempts=_PLANNER_MAX_ATTEMPTS, error=e)) from e
             history.append(Message(
                 role="user",
                 content=_build_json_correction_message(
@@ -914,4 +921,4 @@ Now plan generation prerequisites between these steps.
                 plan = {}
                 last_error = turn_error
 
-    raise RuntimeError(f"规划失败: {last_error}") from last_error
+    raise RuntimeError(str(last_error) or ui_msg("unknown_error")) from last_error

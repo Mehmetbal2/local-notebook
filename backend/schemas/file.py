@@ -17,6 +17,7 @@ class FileResponse(UTCDateTimeModel):
     processing_total: Optional[int]
     processing_message: Optional[str]
     job_id: Optional[str]
+    source_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

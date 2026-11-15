@@ -158,7 +158,7 @@ export function useProjectWorkflows({
 
       showToast(formatWorkflowGeneratingMessage(displayName), 'success')
     } catch (error) {
-      console.error('创建工作流失败:', error)
+      console.error('Creating the report failed:', error)
       showToast(t('ui.failedToCreateTheTaskTryAgainLater'), 'error')
     }
   }
@@ -201,7 +201,7 @@ export function useProjectWorkflows({
       const status = response.workflows[workflowId]
 
       if (!status) {
-        console.error('工作流状态未返回:', workflowId)
+        console.error('Report status not returned:', workflowId)
         pollErrorCount++
         if (pollErrorCount >= MAX_POLL_ERRORS) {
           stopWorkflowPolling()
@@ -246,7 +246,7 @@ export function useProjectWorkflows({
         showToast(t('ui.generationStopped'), 'info')
       }
     } catch (error) {
-      console.error('获取工作流状态失败:', error)
+      console.error('Fetching the report status failed:', error)
       pollErrorCount++
       if (pollErrorCount >= MAX_POLL_ERRORS) {
         stopWorkflowPolling()
@@ -266,7 +266,7 @@ export function useProjectWorkflows({
         startWorkflowPolling(inProgress.id)
       }
     } catch (error) {
-      console.error('加载报告列表失败:', error)
+      console.error('Loading the report list failed:', error)
     }
   }
 
@@ -288,7 +288,7 @@ export function useProjectWorkflows({
       }
       showWorkflowDetail.value = true
     } catch (error) {
-      console.error('获取工作流详情失败:', error)
+      console.error('Fetching report details failed:', error)
       showToast(t('ui.failedToLoadDetails'), 'error')
     }
   }
@@ -377,7 +377,7 @@ export function useProjectWorkflows({
       await loadWorkflows()
       await refreshWorkflowDetail(workflowId)
     } catch (error) {
-      console.error('重新生成步骤失败:', error)
+      console.error('Regenerating the section failed:', error)
       showToast(t('ui.regenerationFailedTryAgainLater'), 'error')
     }
   }
@@ -416,7 +416,7 @@ export function useProjectWorkflows({
       await loadWorkflows()
       showToast(t('ui.deleted'), 'success')
     } catch (error) {
-      console.error('删除工作流失败:', error)
+      console.error('Deleting the report failed:', error)
       showToast(t('ui.deleteFailed'), 'error')
     }
   }
@@ -444,7 +444,7 @@ export function useProjectWorkflows({
         showToast(t('ui.generationStopped'), 'info')
       }
     } catch (error) {
-      console.error('停止工作流失败:', error)
+      console.error('Stopping the report failed:', error)
       showToast(t('ui.failedToStopGenerationTryAgainLater'), 'error')
     }
   }
@@ -494,6 +494,7 @@ export function useProjectWorkflows({
   async function handleWorkflowTitleUpdate(id: string, title: string) {
     try {
       await renameWorkflowTitle(id, title)
+      showToast(t('ui.renameSuccess'), 'success')
     } catch (error) {
       console.error('Failed to update workflow title:', error)
       showToast(t('ui.renameFailed'), 'error')

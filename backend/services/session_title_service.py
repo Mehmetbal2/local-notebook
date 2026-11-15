@@ -147,7 +147,7 @@ async def generate_session_title(
         "Requirements:\n"
         "- Prefer a semantic title over a generic label.\n"
         "- Mention the source topic only when it helps recognition.\n"
-        "- Keep Chinese titles around 6-18 characters, or English titles around 3-8 words.\n"
+        "- Keep Chinese titles around 6-18 characters, English titles around 3-8 words, or Turkish titles around 3-8 words.\n"
         "- Return only the title text.\n\n"
         f"User question:\n{_truncate_text(question, MAX_PROMPT_QUESTION_LENGTH)}\n\n"
         f"Selected source files:\n{_format_file_names(file_names)}"

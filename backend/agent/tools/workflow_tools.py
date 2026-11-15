@@ -58,7 +58,7 @@ class CreateWorkflowGenerationTool(CallableTool2[CreateWorkflowGenerationParams]
     name: str = "create_workflow_generation"
     description: str = (
         "Start an asynchronous report workflow in the right-side panel's "
-        "'Comprehensive reports' (`综合报告`) tab. Do not use this for the 'Quick tools' (`快捷工具`) tab. "
+        "'Comprehensive reports' tab. Do not use this for the quick tools ('Learning' and 'Analysis' tabs). "
         "Report generation can take a long time; do not wait for completion or poll "
         "repeatedly. After this tool succeeds, tell the user generation has started."
     )
@@ -159,8 +159,8 @@ class GetWorkflowGenerationTool(CallableTool2[GetWorkflowGenerationParams]):
     name: str = "get_workflow_generation"
     description: str = (
         "Get status and available content for a report workflow in the right-side "
-        "panel's 'Comprehensive reports' (`综合报告`) tab. Use this for report workflows, not "
-        "'Quick tools' (`快捷工具`) results. "
+        "panel's 'Comprehensive reports' tab. Use this for report workflows, not "
+        "quick-tool results. "
         "If it is still pending, processing, or "
         "cancelling, report the current progress and do not poll repeatedly waiting "
         "for completion. Results list workflow ids first; when more than 10 workflows "

@@ -3,6 +3,7 @@ export default {
     language: '语言',
     chinese: '中文',
     english: 'English',
+    turkish: 'Türkçe',
   },
   common: {
     back: '返回',

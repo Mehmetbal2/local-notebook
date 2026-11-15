@@ -33,7 +33,7 @@ local-Notebook 围绕这两点重新设计：
 |---|---|---|
 | [backend/](./backend) | FastAPI 主服务：API 路由、Agent 对话、引用解析、向量检索、ARQ 后台任务 | [backend/README.zh.md](./backend/README.zh.md) |
 | [frontend/](./frontend) | Vue 3 + Vite 前端：项目管理、对话界面、Settings 配置、原文跳转 | [frontend/README.zh.md](./frontend/README.zh.md) |
-| [services/](./services) | 可选本地模型服务：Embedding / MinerU / FunASR，完全离网时启用 | [services/README.zh.md](./services/README.zh.md) |
+| [services/](./services) | 可选本地模型服务：Embedding / FunASR，完全离网时启用 | [services/README.zh.md](./services/README.zh.md) |
 
 ## 快速开始
 
@@ -79,13 +79,26 @@ PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple \
 
 ## 配置
 
-启动后到前端 **Settings** 页填入 LLM / Embedding / MinerU / FunASR 配置，实时生效，无需重启。
+启动后到前端 **Settings** 页填入 LLM / Embedding / OCR / FunASR 配置，实时生效，无需重启。
 
 ![配置页截图](./docs/screenshots/setting-zh.jpg)
 
-推荐路径：首次部署先用云 API（阿里云百炼 / OpenAI 兼容服务等）快速跑通流程；之后可在 Settings 页逐项切换到 [services/](./services) 下的本地模型服务（Ollama / vLLM / 本地 Embedding / MinerU / FunASR），实现端到端离网。
+推荐路径：首次部署先用云 API（阿里云百炼 / OpenAI 兼容服务等）快速跑通流程；之后可在 Settings 页逐项切换到 [services/](./services) 下的本地模型服务（Ollama / vLLM / 本地 Embedding / FunASR），实现端到端离网。
 
 > **Embedding 是例外**：Embedding 模型不同会导致向量维度与语义空间不同。切换 Embedding 后，已索引的向量数据全部失效，需要删除项目、重新上传文件并重建索引。建议首次部署时先确定 Embedding 服务，再批量上传文件。
+
+## 网络研究
+
+网络搜索使用 Docker 中运行的本地 [SearXNG](https://github.com/searxng/searxng)（macOS 用 OrbStack，Windows/Linux 用 Docker Desktop）。`./start.sh` 会在 Docker 可用时自动启动它（`http://127.0.0.1:8888`），无需 API Key。详见 [services/searxng/README.md](./services/searxng/README.md)。
+
+- **对话和报告**：`web_search` 工具会阅读排名靠前页面的正文（学术结果优先读取免费 PDF）。
+- **添加来源 → 网络搜索**（网页 / 学术）：
+  - *快速*：立即列出结果并标注“全文 / 开放获取 / 仅摘要”，随后模型排序并给出理由；所选结果作为来源导入，有免费全文的以 PDF 导入，并按“作者 - 年份 - 标题”命名。
+  - *深度研究*：后台运行（5–15 分钟），拆分子问题、阅读 20–30 个来源全文、补充搜索并撰写带引用的报告；报告所用来源可一键加入项目。
+
+## 查找来源、笔记和结果
+
+两侧面板都有搜索框：输入即按标题过滤；开启“同时搜索内容”后还会搜索来源、笔记、结果和报告章节的正文并高亮。匹配忽略大小写、变音符号和撇号。来源面板中的“选中结果 / 仅选结果”可让对话和生成只使用找到的来源。
 
 ## 数据持久化
 

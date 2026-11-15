@@ -11,9 +11,9 @@ from utils.time import utc_isoformat
 
 
 class Workflow(Base):
-    """一次「一键生成报告」任务。
+    """One "generate report" job.
 
-    Plan 总模型为它规划出若干栏目(steps)，每个栏目对应一个 Feature。
+    The planner model plans several sections (steps) for it; each section maps to one Feature.
     """
 
     __tablename__ = "workflows"
@@ -25,21 +25,21 @@ class Workflow(Base):
         String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    # 展示来源类型；仅用于前端区分内置 prompt / 自定义入口。
+    # display source type; only used by the frontend to tell built-in prompts from custom entries.
     workflow_type: Mapped[str] = mapped_column(String(50), nullable=False, default="custom")
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # pending / processing / cancelling / completed / partial / failed / cancelled
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
 
-    # Plan 模型产出的结构化规划(steps 列表)
+    # structured plan produced by the planner model (steps list)
     plan_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # 用户自定义描述
+    # user-provided description
     custom_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # 参与生成的文件 id 列表
+    # ids of the files used for generation
     file_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # 跨栏目共享、聚合后的引用表 {citation_id: metadata}
+    # aggregated citation table shared across sections {citation_id: metadata}
     citations_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     next_citation_display_num: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 

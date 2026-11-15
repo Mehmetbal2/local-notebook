@@ -27,7 +27,7 @@
   border: 1px solid #c7c7c0;
   border-radius: 50%;
   background: #fff;
-  color: #666;
+  color: var(--text-tertiary);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
@@ -35,7 +35,7 @@
   user-select: none;
 }
 .help-tooltip:focus-visible {
-  outline: 2px solid #1a1a1a;
+  outline: 2px solid var(--text-primary);
   outline-offset: 2px;
 }
 .help-tooltip::before {
@@ -64,7 +64,7 @@
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
-  color: #333;
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.5;
@@ -90,7 +90,7 @@
 }
 .tooltip-panel strong {
   margin-top: 6px;
-  color: #1a1a1a;
+  color: var(--text-primary);
   font-weight: 600;
 }
 .tooltip-panel strong:first-child {
