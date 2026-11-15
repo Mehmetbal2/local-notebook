@@ -10,6 +10,7 @@ from urllib.parse import unquote
 from utils.text_decoding import read_text_file
 
 from .base import BaseParser, Block, ParseResult
+from .text_split import find_paragraph_cut
 
 try:  # BeautifulSoup is already a project dependency (EPUB parsing).
     from bs4 import BeautifulSoup, NavigableString, Tag
@@ -54,14 +55,7 @@ def _split_long_paragraph(text: str, max_chars: int = 800) -> List[str]:
     punctuation = "。！？!?؛;؟۔.:"
 
     while len(remaining) > max_chars:
-        window = remaining[:max_chars]
-        cut = max(window.rfind(char) for char in punctuation)
-        if cut < max_chars * 0.55:
-            cut = window.rfind(" ")
-        if cut < max_chars * 0.55:
-            cut = max_chars
-        else:
-            cut += 1
+        cut = find_paragraph_cut(remaining, max_chars, punctuation)
         chunk = remaining[:cut].strip()
         if chunk:
             chunks.append(chunk)

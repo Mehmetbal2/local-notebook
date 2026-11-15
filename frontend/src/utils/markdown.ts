@@ -11,6 +11,28 @@ marked.setOptions({
   gfm: true
 })
 
+/**
+ * Upright Greek letters from the LaTeX `upgreek` package (`\\upeta`, `\\Upgamma`…).
+ * OCR output uses them and KaTeX does not know them, so they would show up as
+ * red command names; the ordinary letter is the closest KaTeX has.
+ */
+const UPGREEK_LETTERS = [
+  'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota',
+  'kappa', 'lambda', 'mu', 'nu', 'xi', 'pi', 'rho', 'sigma', 'tau', 'upsilon',
+  'phi', 'chi', 'psi', 'omega', 'varepsilon', 'vartheta', 'varpi', 'varrho',
+  'varsigma', 'varphi',
+]
+const UPGREEK_CAPITALS = ['Gamma', 'Delta', 'Theta', 'Lambda', 'Xi', 'Pi', 'Sigma', 'Upsilon', 'Phi', 'Psi', 'Omega']
+const KATEX_MACROS: Record<string, string> = Object.fromEntries([
+  ...UPGREEK_LETTERS.map((name) => [`\\up${name}`, `\\${name}`]),
+  ...UPGREEK_CAPITALS.map((name) => [`\\Up${name.toLowerCase()}`, `\\${name}`]),
+])
+
+/** KaTeX may add to the macro table it is given, so every call gets a copy. */
+function katexOptions(displayMode: boolean) {
+  return { displayMode, throwOnError: false, macros: { ...KATEX_MACROS } }
+}
+
 type ProtectedItem = {
   placeholder: string
   content: string
@@ -28,7 +50,7 @@ function protectItem(
 
 function renderLatex(latex: string, displayMode: boolean, fallback: string): string {
   try {
-    return katex.renderToString(latex.trim(), { displayMode, throwOnError: false })
+    return katex.renderToString(latex.trim(), katexOptions(displayMode))
   } catch {
     return escapeHtml(fallback)
   }
@@ -110,7 +132,7 @@ export function renderLatexOnly(text: string): string {
   const render = (latex: string, displayMode: boolean, fallback: string) => {
     let output: string
     try {
-      output = katex.renderToString(toLatex(latex), { displayMode, throwOnError: false })
+      output = katex.renderToString(toLatex(latex), katexOptions(displayMode))
     } catch {
       output = fallback
     }
