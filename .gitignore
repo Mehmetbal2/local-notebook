@@ -113,6 +113,7 @@ milvus/
 services/**/__pycache__/
 
 # ── Internal dev docs (not for distribution) ────────────────────────────────
+.ai-context/
 IMAGE_IMPLEMENTATION_PLAN.md
 IMAGE_IMPLEMENTATION_SUMMARY.md
 MIGRATION_NOTES.md

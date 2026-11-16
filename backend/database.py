@@ -22,7 +22,7 @@ if "sqlite" in DATABASE_URL:
     @event.listens_for(engine.sync_engine, "connect")
     def _set_sqlite_pragma(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
-        journal_mode = os.getenv("SQLITE_JOURNAL_MODE", "DELETE").upper()
+        journal_mode = os.getenv("SQLITE_JOURNAL_MODE", "WAL").upper()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute(f"PRAGMA journal_mode={journal_mode}")
         cursor.execute("PRAGMA busy_timeout=30000")
