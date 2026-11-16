@@ -175,10 +175,62 @@ def _ensure_collection_loaded(client, name: str) -> bool:
     return True
 
 
+def _get_collection_dim(client, name: str) -> int | None:
+    if not client.has_collection(name):
+        return None
+    try:
+        desc = client.describe_collection(name)
+        for field in desc.get("fields", []):
+            if field.get("name") == "embedding":
+                params = field.get("params") or {}
+                dim_val = params.get("dim") or field.get("dim")
+                if dim_val is not None:
+                    return int(dim_val)
+    except Exception as exc:
+        logger.warning("Could not inspect collection '%s' dim: %s", name, exc)
+    return None
+
+
+def _is_collection_empty(client, name: str) -> bool:
+    try:
+        rows = client.query(collection_name=name, filter='id != ""', output_fields=["id"], limit=1)
+        return not bool(rows)
+    except Exception:
+        return False
+
+
+def reset_shared_collections() -> None:
+    client = _get_client()
+    for name in shared_collection_names():
+        if client.has_collection(name):
+            client.drop_collection(collection_name=name)
+            logger.info("Dropped shared Milvus collection '%s' after embedding model switch", name)
+
+
+def _check_or_recreate_collection_dim(client, name: str, dim: int) -> bool:
+    """Return True if collection already exists with matching dim; False if it was dropped/absent and must be created."""
+    if not _ensure_collection_loaded(client, name):
+        return False
+    existing_dim = _get_collection_dim(client, name)
+    if existing_dim is None or existing_dim == dim:
+        return True
+    if _is_collection_empty(client, name):
+        logger.info(
+            "Dropping empty Milvus collection '%s' with stale dim=%s to recreate with dim=%s",
+            name,
+            existing_dim,
+            dim,
+        )
+        client.drop_collection(collection_name=name)
+        return False
+    from utils.i18n import msg as ui_msg
+    raise RuntimeError(ui_msg("embedding_dim_mismatch", existing_dim=existing_dim, new_dim=dim))
+
+
 def ensure_collection(project_id: str, dim: int) -> None:
     client = _get_client()
     name = TEXT_COLLECTION
-    if _ensure_collection_loaded(client, name):
+    if _check_or_recreate_collection_dim(client, name, dim):
         return
 
     from pymilvus import DataType
@@ -212,7 +264,7 @@ def ensure_collection(project_id: str, dim: int) -> None:
 def ensure_image_collection(project_id: str, dim: int) -> None:
     client = _get_client()
     name = IMAGE_COLLECTION
-    if _ensure_collection_loaded(client, name):
+    if _check_or_recreate_collection_dim(client, name, dim):
         return
 
     from pymilvus import DataType
@@ -331,6 +383,11 @@ def search(
     if not _ensure_collection_loaded(client, name):
         return []
 
+    existing_dim = _get_collection_dim(client, name)
+    if existing_dim is not None and existing_dim != len(query_vector):
+        from utils.i18n import msg as ui_msg
+        raise RuntimeError(ui_msg("embedding_dim_mismatch", existing_dim=existing_dim, new_dim=len(query_vector)))
+
     results = client.search(
         collection_name=name,
         data=[query_vector],
@@ -365,6 +422,11 @@ def search_images(
 
     if not _ensure_collection_loaded(client, name):
         return []
+
+    existing_dim = _get_collection_dim(client, name)
+    if existing_dim is not None and existing_dim != len(query_vector):
+        from utils.i18n import msg as ui_msg
+        raise RuntimeError(ui_msg("embedding_dim_mismatch", existing_dim=existing_dim, new_dim=len(query_vector)))
 
     results = client.search(
         collection_name=name,

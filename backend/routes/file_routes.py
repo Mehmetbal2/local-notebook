@@ -97,7 +97,7 @@ def _resolve_db_file_path(db_file: File) -> Path:
 
 
 ACTIVE_FILE_STATUSES = {"pending", "processing"}
-STOPPABLE_TO_RETRY_STATUSES = {"cancelled", "failed"}
+STOPPABLE_TO_RETRY_STATUSES = {"cancelled", "failed", "ready"}
 MAX_BATCH_FILES = 200
 
 
@@ -474,13 +474,20 @@ async def reprocess_file(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FileResponse:
-    """Process a stopped or failed file again from the start."""
+    """Re-embed a ready file from stored segments, or parse a stopped/failed file again from the start."""
     db_file = await _get_file_or_404(db, file_id, current_user)
     if db_file.status not in STOPPABLE_TO_RETRY_STATUSES:
         raise HTTPException(status_code=409, detail=ui_msg("file_not_reprocessable"))
     redis = request.app.state.redis
     if redis is None:
         raise HTTPException(status_code=503, detail=ui_msg("queue_unavailable_file"))
+    from sqlalchemy import func
+    from models.segment import Segment
+    seg_count_res = await db.execute(
+        select(func.count()).select_from(Segment).where(Segment.file_id == db_file.id)
+    )
+    has_segments = (seg_count_res.scalar() or 0) > 0
+    task_name = "reembed_file_task" if has_segments else "parse_file_task"
     db_file.status = "pending"
     db_file.error_message = None
     db_file.processing_current = 0
@@ -488,7 +495,7 @@ async def reprocess_file(
     db_file.processing_message = None
     await db.commit()
     output_language = (body.output_language if body else None) or None
-    job = await redis.enqueue_job("parse_file_task", db_file.id, output_language)
+    job = await redis.enqueue_job(task_name, db_file.id, output_language)
     db_file.job_id = job.job_id
     await db.commit()
     await db.refresh(db_file)

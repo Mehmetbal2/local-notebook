@@ -53,6 +53,51 @@ async def _raise_if_file_cancelled(file_id: str) -> None:
         raise FileProcessingCancelled()
 
 
+from contextlib import asynccontextmanager
+
+
+async def _shielded_commit(db) -> None:
+    commit_task = asyncio.ensure_future(db.commit())
+    try:
+        await asyncio.shield(commit_task)
+    except asyncio.CancelledError:
+        try:
+            await commit_task
+        except Exception:
+            pass
+        raise
+
+
+async def _safe_close(db) -> None:
+    last_exc: Exception | None = None
+    for attempt in range(20):
+        close_task = asyncio.ensure_future(db.close())
+        try:
+            await asyncio.shield(close_task)
+            return
+        except asyncio.CancelledError:
+            try:
+                await close_task
+            except Exception:
+                pass
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 19:
+                await asyncio.sleep(0.05)
+    if last_exc is not None:
+        logger.debug("close skipped after retries: %s", last_exc)
+
+
+@asynccontextmanager
+async def _safe_session(session_factory):
+    db = session_factory()
+    try:
+        yield db
+    finally:
+        await _safe_close(db)
+
+
 async def _discard_cancelled_file(session_factory, file_id: str, project_id: str) -> None:
     """Remove whatever a stopped run already stored and leave the file marked 'cancelled'."""
     from sqlalchemy import delete as sa_delete
@@ -62,7 +107,7 @@ async def _discard_cancelled_file(session_factory, file_id: str, project_id: str
     from models.segment import Segment
     from services.vector_service import delete_by_file
 
-    async with session_factory() as cleanup_db:
+    async with _safe_session(session_factory) as cleanup_db:
         await cleanup_db.execute(sa_delete(Segment).where(Segment.file_id == file_id))
         await cleanup_db.execute(sa_delete(Block).where(Block.file_id == file_id))
         await cleanup_db.execute(sa_delete(Image).where(Image.file_id == file_id))
@@ -72,7 +117,7 @@ async def _discard_cancelled_file(session_factory, file_id: str, project_id: str
             db_file.error_message = None
             db_file.processing_message = None
             db_file.updated_at = datetime.now(timezone.utc)
-        await cleanup_db.commit()
+        await _shielded_commit(cleanup_db)
     try:
         await asyncio.to_thread(delete_by_file, project_id, file_id)
     except Exception as exc:
@@ -84,6 +129,27 @@ def _exception_message(exc: BaseException) -> str:
     if message:
         return message
     return exc.__class__.__name__
+
+
+async def _safe_rollback(db) -> None:
+    last_exc: Exception | None = None
+    for attempt in range(20):
+        rb_task = asyncio.ensure_future(db.rollback())
+        try:
+            await asyncio.shield(rb_task)
+            return
+        except asyncio.CancelledError:
+            try:
+                await rb_task
+            except Exception:
+                pass
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 19:
+                await asyncio.sleep(0.05)
+    if last_exc is not None:
+        logger.debug("rollback skipped after retries: %s", last_exc)
 
 
 async def _commit_file_progress(
@@ -102,7 +168,7 @@ async def _commit_file_progress(
     if message is not None:
         db_file.processing_message = message or None
     db_file.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+    await _shielded_commit(db)
     if db_file.status != "ready":
         await _raise_if_file_cancelled(db_file.id)
 
@@ -211,7 +277,7 @@ async def _mark_workflow_cancelled(
             feat.error_message = message
             feat.finished_at = datetime.now(timezone.utc)
 
-        await db.commit()
+        await _shielded_commit(db)
 
 
 async def on_startup(ctx: dict) -> None:
@@ -238,7 +304,7 @@ async def on_startup(ctx: dict) -> None:
 
 
 async def _recover_stuck_files(session_factory) -> None:
-    from sqlalchemy import select, delete as sa_delete
+    from sqlalchemy import select, func, delete as sa_delete
     from models.file import File
     from models.segment import Segment
     from models.block import Block
@@ -246,7 +312,7 @@ async def _recover_stuck_files(session_factory) -> None:
     from services.local_queue import get_active_local_queue
     from services.vector_service import delete_by_file
 
-    async with session_factory() as db:
+    async with _safe_session(session_factory) as db:
         result = await db.execute(
             select(File).where(File.status.in_(["processing", "pending"]))
         )
@@ -257,27 +323,44 @@ async def _recover_stuck_files(session_factory) -> None:
         logger.warning(f"Found {len(stuck)} file(s) stuck in 'processing'/'pending', recovering...")
         arq_pool = await _get_arq_pool()
 
+        from uuid import uuid4
+        to_enqueue: list[tuple[str, str, str, str]] = []
         for f in stuck:
-            logger.info(f"Recovering file {f.id} ({f.file_name})")
-            await db.execute(sa_delete(Segment).where(Segment.file_id == f.id))
-            await db.execute(sa_delete(Block).where(Block.file_id == f.id))
-            await db.execute(sa_delete(Image).where(Image.file_id == f.id))
-            await asyncio.to_thread(delete_by_file, f.project_id, f.id)
+            seg_count_res = await db.execute(
+                select(func.count()).select_from(Segment).where(Segment.file_id == f.id)
+            )
+            has_segments = (seg_count_res.scalar() or 0) > 0
+            task_name = "reembed_file_task" if has_segments else "parse_file_task"
+            logger.info(f"Recovering file {f.id} ({f.file_name}) via {task_name}")
+            if not has_segments:
+                await db.execute(sa_delete(Segment).where(Segment.file_id == f.id))
+                await db.execute(sa_delete(Block).where(Block.file_id == f.id))
+                await db.execute(sa_delete(Image).where(Image.file_id == f.id))
+            new_job_id = uuid4().hex
             f.status = "pending"
+            f.job_id = new_job_id
             f.error_message = None
             f.processing_current = 0
             f.processing_total = None
             f.processing_message = None
-            await db.flush()
-            if arq_pool is not None:
-                job = await arq_pool.enqueue_job("parse_file_task", f.id)
-                if job is not None:
-                    f.job_id = job.job_id
-                logger.info(f"Re-enqueued file {f.id}")
+            to_enqueue.append((f.id, f.project_id, new_job_id, task_name))
 
-        await db.commit()
-        if arq_pool is not None and arq_pool is not get_active_local_queue():
-            await arq_pool.aclose()
+        await _shielded_commit(db)
+
+    for fid, pid, new_job_id, task_name in to_enqueue:
+        try:
+            await asyncio.to_thread(delete_by_file, pid, fid)
+        except Exception as exc:
+            logger.warning(f"Could not delete old vectors for recovered file {fid}: {exc}")
+        if arq_pool is not None:
+            try:
+                await arq_pool.enqueue_job(task_name, fid, _job_id=new_job_id)
+                logger.info(f"Re-enqueued file {fid} ({task_name}, job_id={new_job_id})")
+            except Exception as exc:
+                logger.warning(f"Could not enqueue recovered file {fid} ({task_name}): {exc}")
+
+    if arq_pool is not None and arq_pool is not get_active_local_queue():
+        await arq_pool.aclose()
 
 
 async def _get_arq_pool():
@@ -313,7 +396,7 @@ async def parse_file_task(
     stop_reason: str | None = None
     project_id = ""
 
-    async with session_factory() as db:
+    async with _safe_session(session_factory) as db:
         db_file = await db.get(File, file_id)
         if not db_file:
             logger.error(f"parse_file_task: file {file_id} not found")
@@ -342,18 +425,19 @@ async def parse_file_task(
             from models.block import Block
             from models.image import Image
             from sqlalchemy import delete as sa_delete
+            from services.vector_service import delete_by_file
+            await asyncio.to_thread(delete_by_file, project_id, file_id)
+
             await db.execute(sa_delete(Segment).where(Segment.file_id == file_id))
             await db.execute(sa_delete(Block).where(Block.file_id == file_id))
             await db.execute(sa_delete(Image).where(Image.file_id == file_id))
-            from services.vector_service import delete_by_file
-            await asyncio.to_thread(delete_by_file, project_id, file_id)
 
             db_file.status = "processing"
             db_file.error_message = None
             db_file.processing_current = 0
             db_file.processing_total = None
             db_file.processing_message = _file_processing_message(file_type)
-            await db.commit()
+            await _shielded_commit(db)
 
             import config
             _, emb_base_url, _, emb_api_key = await config.resolve_embedding_config()
@@ -539,7 +623,7 @@ async def parse_file_task(
                 db_image_count = len(db_images)
                 await db.flush()
 
-            await db.commit()
+            await _shielded_commit(db)
             logger.info(
                 f"[{file_name}] committed {len(db_blocks)} blocks, "
                 f"{len(db_segments)} segments, {db_image_count} images"
@@ -644,15 +728,17 @@ async def parse_file_task(
 
         except FileProcessingCancelled:
             logger.info(f"[{file_name}] processing stopped by the user")
+            await _safe_rollback(db)
             stop_reason = "stopped"
 
         except asyncio.CancelledError:
             logger.info(f"[{file_name}] processing task cancelled")
+            await _safe_rollback(db)
             stop_reason = "task_cancelled"
 
         except Exception as exc:
             logger.exception(f"Failed to parse file {file_id}: {exc}")
-            await db.rollback()
+            await _safe_rollback(db)
             db_file = await db.get(File, file_id)
             if not db_file:
                 # Deleted while it was being processed: nothing left to mark or retry.
@@ -660,7 +746,7 @@ async def parse_file_task(
             db_file.status = "failed"
             db_file.error_message = str(exc)
             db_file.updated_at = datetime.now(timezone.utc)
-            await db.commit()
+            await _shielded_commit(db)
             raise
 
     # Clean up only after the session above is closed: its transaction may still hold the
@@ -673,6 +759,142 @@ async def parse_file_task(
         if stop_reason == "task_cancelled":
             raise asyncio.CancelledError()
     return {"status": "cancelled", "file_id": file_id}
+
+
+async def reembed_file_task(
+    ctx: dict,
+    file_id: str,
+    output_language: str | None = None,
+) -> dict:
+    """Re-vectorize an already parsed file from its stored SQLite segments & image descriptions without re-running OCR/LLM/VLM."""
+    set_ui_language(output_language)
+    from sqlalchemy import select, asc
+    from models.file import File
+    from models.segment import Segment
+    from models.image import Image
+    from services.embedding_service import embed_texts
+    from services.vector_service import (
+        delete_by_file,
+        ensure_collection,
+        ensure_image_collection,
+        upsert_chunks,
+        upsert_image_chunks,
+    )
+
+    session_factory = ctx["session_factory"]
+    async with _safe_session(session_factory) as db:
+        db_file = await db.get(File, file_id)
+        if not db_file:
+            return {"status": "error", "reason": "file not found"}
+        if db_file.status == FILE_CANCELLED_STATUS:
+            return {"status": "cancelled", "file_id": file_id}
+
+        seg_res = await db.execute(
+            select(Segment).where(Segment.file_id == file_id).order_by(asc(Segment.segment_index))
+        )
+        segments = list(seg_res.scalars().all())
+        if not segments:
+            # No stored segments in SQLite; fall back to full parse.
+            pass
+        else:
+            img_res = await db.execute(
+                select(Image).where(Image.file_id == file_id).order_by(asc(Image.image_index))
+            )
+            images = [img for img in img_res.scalars().all() if (img.description or "").strip()]
+
+            file_name = db_file.file_name
+            project_id = db_file.project_id
+            total_units = len(segments) + len(images) + 1
+
+            db_file.status = "processing"
+            db_file.error_message = None
+            db_file.processing_current = 0
+            db_file.processing_total = total_units
+            db_file.processing_message = ui_msg("reembedding_vectors")
+            await _shielded_commit(db)
+
+            progress = FileProgressTracker(db, db_file, total_units)
+            await progress.start()
+
+            try:
+                try:
+                    await asyncio.to_thread(delete_by_file, project_id, file_id)
+                except Exception as exc:
+                    logger.debug(f"[{file_name}] delete_by_file before re-embed skipped: {exc}")
+
+                await _raise_if_file_cancelled(file_id)
+                contents = [s.content for s in segments]
+                vectors = await embed_texts(contents, progress_callback=progress.advance)
+                dim = len(vectors[0])
+                await asyncio.to_thread(ensure_collection, project_id, dim)
+
+                chunks = [
+                    {
+                        "id":            s.id,
+                        "file_id":       file_id,
+                        "file_name":     file_name,
+                        "segment_index": s.segment_index,
+                        "content":       s.content,
+                        "summary":       s.summary or "",
+                        "embedding":     vectors[i],
+                    }
+                    for i, s in enumerate(segments)
+                ]
+                await asyncio.to_thread(upsert_chunks, project_id, chunks)
+
+                if images:
+                    await _raise_if_file_cancelled(file_id)
+                    await asyncio.to_thread(ensure_image_collection, project_id, dim)
+                    image_descriptions = [img.description for img in images]
+                    image_vectors = await embed_texts(image_descriptions, progress_callback=progress.advance)
+                    image_chunks = [
+                        {
+                            "id":          img.id,
+                            "file_id":     file_id,
+                            "file_name":   file_name,
+                            "image_index": img.image_index,
+                            "description": img.description,
+                            "embedding":   image_vectors[i],
+                        }
+                        for i, img in enumerate(images)
+                    ]
+                    await asyncio.to_thread(upsert_image_chunks, project_id, image_chunks)
+
+                db_file.status = "ready"
+                db_file.error_message = None
+                db_file.processing_message = None
+                await progress.finish()
+                logger.info(f"[{file_name}] re-embedded {len(segments)} segments and {len(images)} images (dim={dim})")
+                return {"status": "ok", "file_id": file_id, "segments": len(segments), "images": len(images)}
+
+            except (FileProcessingCancelled, asyncio.CancelledError) as exc:
+                await _safe_rollback(db)
+                try:
+                    db_file = await db.get(File, file_id)
+                    if db_file is not None:
+                        db_file.status = FILE_CANCELLED_STATUS
+                        db_file.processing_message = None
+                        await _shielded_commit(db)
+                except Exception:
+                    pass
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                return {"status": "cancelled", "file_id": file_id}
+            except Exception as exc:
+                logger.exception(f"Failed to re-embed file {file_id}: {exc}")
+                await _safe_rollback(db)
+                try:
+                    db_file = await db.get(File, file_id)
+                    if db_file is not None:
+                        db_file.status = "failed"
+                        db_file.error_message = str(exc)
+                        db_file.processing_message = None
+                        await _shielded_commit(db)
+                except Exception:
+                    pass
+                raise
+
+    return await parse_file_task(ctx, file_id, output_language=output_language)
 
 
 async def _update_project_summary(
@@ -697,7 +919,7 @@ async def _update_project_summary(
 
     project = await db.get(Project, project_id)
     if not project:
-        await db.commit()
+        await _shielded_commit(db)
         return
     project_name = project.name
     project_description = project.description
@@ -707,7 +929,7 @@ async def _update_project_summary(
         for f in ready_files if f.summary
     ]
 
-    await db.commit()
+    await _shielded_commit(db)
 
     if not file_summaries:
         return
@@ -728,13 +950,13 @@ async def _update_project_summary(
     if summary or color:
         project = await db.get(Project, project_id)
         if not project:
-            await db.commit()
+            await _shielded_commit(db)
             return
         if summary:
             project.summary = summary
         if color:
             project.color = color
-        await db.commit()
+        await _shielded_commit(db)
         logger.info(
             f"Project {project_id} overview updated "
             f"({len(summary or '')} chars, color={color or 'unchanged'})"
@@ -1939,6 +2161,7 @@ from workers.deep_research import deep_research_task  # noqa: E402
 class WorkerSettings:
     functions = [
         parse_file_task,
+        reembed_file_task,
         func(generate_feature_task, max_tries=1),
         func(deep_research_task, max_tries=1),
         # Workflow generation is not idempotent yet; avoid ARQ replay appending duplicate steps.

@@ -114,7 +114,13 @@ class LocalTaskQueue:
                 except Exception as exc:
                     if job_id in self._cancelled_jobs:
                         # A job the user cancelled must not start over.
-                        logger.info("Local task %s (job_id=%s) stopped after cancellation: %s", function_name, job_id, exc)
+                        logger.info(
+                            "Local task %s (job_id=%s) stopped after cancellation: %s",
+                            function_name,
+                            job_id,
+                            exc,
+                            exc_info=exc,
+                        )
                         return None
                     if attempt >= max_tries:
                         logger.exception(

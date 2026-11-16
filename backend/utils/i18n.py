@@ -102,15 +102,46 @@ MESSAGES: dict[str, dict[str, str]] = {
     "preflight_llm": {"tr": "LLM (dil modeli)", "en": "LLM (language model)", "zh": "LLM 大语言模型"},
     "preflight_embedding": {"tr": "Gömme (embedding) modeli", "en": "Embedding model", "zh": "Embedding 向量模型"},
     "embedding_switch_blocked": {
-        "tr": "Şu anda {count} ayrıştırılmış belge var. Gömme servisini değiştirmek bu belgelerin tüm vektörlerini geçersiz kılar; projeleri silip dosyaları yeniden yüklemeniz gerekir.",
-        "en": "There are {count} parsed documents. Switching the embedding service invalidates all of their vectors; the projects must be deleted and the files uploaded again.",
-        "zh": "当前有 {count} 个已解析的文档，切换 Embedding 服务后这些文档的向量数据将全部失效，需要删除项目并重新上传。",
+        "tr": "Şu anda {count} ayrıştırılmış belge var. Gömme servisini değiştirdiğinizde eski vektör tablosu sıfırlanır; sonrasında \"Belgeleri Yeniden Vektörleştir\" düğmesiyle mevcut özetleri koruyarak tüm belgeleri yeniden vektörleştirebilirsiniz.",
+        "en": "There are {count} parsed documents. Switching the embedding service resets the old vector collection; afterwards you can click \"Re-index Documents\" to rebuild vectors while keeping existing summaries.",
+        "zh": "当前有 {count} 个已解析的文档。切换 Embedding 服务后将重置旧向量集合，随后可点击「重新向量化文档」保留现有摘要重建所有向量。",
+    },
+    "embedding_active_files_blocked": {
+        "tr": "Şu anda işlenmekte olan {count} belge var. Gömme modelini değiştirmeden veya yeniden vektörleştirme başlatmadan önce devam eden işlemlerin tamamlanmasını bekleyin ya da kaynaklar listesinden durdurun.",
+        "en": "There are {count} document(s) currently being processed. Wait for active processing to finish or stop them from the sources list before switching the embedding model or re-indexing.",
+        "zh": "当前有 {count} 个文档正在处理中。请等待处理完成或在来源列表中停止它们，然后再切换 Embedding 模型或重新向量化。",
+    },
+    "reindex_confirm_required": {
+        "tr": "Yeniden vektörleştirme işlemi için onay gereklidir (confirm=true).",
+        "en": "Confirmation is required to re-index documents (confirm=true).",
+        "zh": "重新向量化操作需要确认（confirm=true）。",
+    },
+    "vector_reset_failed": {
+        "tr": "Vektör koleksiyonu sıfırlanamadı ({error}). Ayarlar > Gömme > Belgeleri Yeniden Vektörleştir düğmesiyle tekrar deneyebilirsiniz.",
+        "en": "Could not reset vector collections ({error}). You can retry from Settings > Embedding > Re-index Documents.",
+        "zh": "无法重置向量集合（{error}）。可在「设置 → Embedding → 重新向量化文档」中重试。",
+    },
+    "embedding_dim_mismatch": {
+        "tr": "Milvus vektör tablosunun boyutu ({existing_dim}) ile aktif gömme modelinin boyutu ({new_dim}) uyuşmuyor. Ayarlar > Gömme bölümünden model değişikliğini onaylayarak kaydedin veya mevcut belgeleri yeniden işleyin.",
+        "en": "The Milvus vector collection dimension ({existing_dim}) does not match the active embedding model dimension ({new_dim}). Confirm and save the embedding model switch in Settings > Embedding, or reprocess your documents.",
+        "zh": "Milvus 向量集合维度（{existing_dim}）与当前 Embedding 模型维度（{new_dim}）不一致。请在「设置 → Embedding」确认保存模型切换，或重新处理文档。",
+    },
+    "local_model_dir_missing": {
+        "tr": "Yerel gömme modeli dizini bulunamadı: {path}",
+        "en": "Local embedding model directory not found: {path}",
+        "zh": "未找到本地 Embedding 模型目录：{path}",
     },
     # ---- file processing ----
     "processing_pdf": {"tr": "PDF ayrıştırılıyor...", "en": "Parsing PDF...", "zh": "正在解析 PDF..."},
     "processing_audio": {"tr": "Ses yazıya dökülüyor...", "en": "Transcribing audio...", "zh": "正在转写音频..."},
     "processing_image": {"tr": "Görsel analiz ediliyor...", "en": "Analyzing image...", "zh": "正在分析图片..."},
     "processing_text": {"tr": "İçerik okunuyor...", "en": "Reading content...", "zh": "正在读取内容..."},
+    "reembedding_vectors": {"tr": "Vektörler yeniden oluşturuluyor...", "en": "Rebuilding vectors...", "zh": "正在重新生成向量..."},
+    "reindex_queued": {
+        "tr": "{count} belge için yeniden vektörleştirme başlatıldı (mevcut metin ve özetler korunur).",
+        "en": "Re-indexing started for {count} document(s) (existing text and summaries are preserved).",
+        "zh": "已为 {count} 个文档启动重新向量化（保留现有文本与摘要）。",
+    },
     "embedding_url_missing": {
         "tr": "Gömme (embedding) servisi adresi yapılandırılmamış. Ayarlar'dan yapılandırıp dosyayı yeniden yükleyin.",
         "en": "The embedding service address is not set. Configure it in Settings and upload the file again.",
@@ -124,7 +155,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "file_not_ready": {"tr": "Dosyanın işlenmesi henüz tamamlanmadı", "en": "The file has not finished processing", "zh": "文件尚未处理完成"},
     "unsupported_file_type": {"tr": "Desteklenmeyen dosya türü: {ext}", "en": "Unsupported file type: {ext}", "zh": "不支持的文件类型: {ext}"},
     "file_not_found": {"tr": "Dosya bulunamadı: {path}", "en": "File not found: {path}", "zh": "文件不存在: {path}"},
-    "file_not_reprocessable": {"tr": "Yalnızca durdurulan veya ayrıştırılamayan dosyalar yeniden işlenebilir", "en": "Only stopped or failed files can be processed again", "zh": "只有已停止或解析失败的文件可以重新处理"},
+    "file_not_reprocessable": {
+        "tr": "Şu anda işlenmekte olan dosyalar yeniden işlenemez; önce işlemi durdurun.",
+        "en": "Files that are currently being processed cannot be reprocessed; stop them first.",
+        "zh": "正在处理中的文件无法重新处理，请先停止处理。",
+    },
     "queue_unavailable_file": {"tr": "Arka plan görev servisi kullanılamıyor; dosya işlenemiyor", "en": "The background task service is unavailable, so the file cannot be processed", "zh": "后台任务服务不可用，无法处理文件"},
     "unknown_error": {"tr": "Bilinmeyen hata", "en": "Unknown error", "zh": "未知错误"},
     # ---- speech to text ----

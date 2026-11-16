@@ -1,5 +1,7 @@
+import logging
+import os
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +23,7 @@ from services.usage_service import record_model_usage
 from utils.i18n import msg as ui_msg
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+logger = logging.getLogger("settings_routes")
 
 
 async def _full_settings() -> dict[str, str | None]:
@@ -40,6 +43,21 @@ async def get_settings(
     return SettingsResponse(settings=all_settings)
 
 
+async def _require_no_active_files(db: AsyncSession) -> None:
+    from sqlalchemy import select, func
+    from models.file import File
+
+    active_result = await db.execute(
+        select(func.count()).select_from(File).where(File.status.in_(["pending", "processing"]))
+    )
+    active_count = active_result.scalar() or 0
+    if active_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=ui_msg("embedding_active_files_blocked", count=active_count),
+        )
+
+
 @router.patch("", response_model=SettingsResponse)
 async def update_settings(
     body: SettingsUpdate,
@@ -55,23 +73,65 @@ async def update_settings(
             detail="No valid setting keys provided.",
         )
 
-    if "embedding_source" in filtered and not body.force:
-        old_source = await config.get_setting("embedding_source", "")
-        new_source = filtered["embedding_source"]
-        if old_source and new_source != old_source:
-            from sqlalchemy import select, func
-            from models.file import File
-            count_result = await db.execute(
-                select(func.count()).select_from(File).where(File.status == "ready")
+    old_source = await config.get_setting("embedding_source", "")
+    new_source = filtered.get("embedding_source", old_source)
+    old_model = await config.get_setting("embedding_model", "")
+    new_model = filtered.get("embedding_model", old_model)
+    source_changed = bool(old_source and new_source and new_source != old_source)
+    model_changed = bool(
+        new_source == "custom"
+        and "embedding_model" in filtered
+        and (old_model or "").strip() != (new_model or "").strip()
+    )
+    embedding_changed = source_changed or model_changed
+
+    if embedding_changed:
+        await _require_no_active_files(db)
+
+    if embedding_changed and not body.force:
+        from sqlalchemy import select, func
+        from models.file import File
+        count_result = await db.execute(
+            select(func.count()).select_from(File).where(File.status == "ready")
+        )
+        file_count = count_result.scalar() or 0
+        if file_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=ui_msg("embedding_switch_blocked", count=file_count),
             )
-            file_count = count_result.scalar() or 0
-            if file_count > 0:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=ui_msg("embedding_switch_blocked", count=file_count),
-                )
+
+    if embedding_changed and body.force:
+        import asyncio
+        from services.vector_service import reset_shared_collections
+        try:
+            await asyncio.to_thread(reset_shared_collections)
+        except Exception as exc:
+            logger.exception("Failed to reset shared Milvus collections after embedding switch")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=ui_msg("vector_reset_failed", error=str(exc)),
+            )
 
     await config.set_many(filtered, db)
+
+    if "embedding_source" in filtered or "embedding_local_url" in filtered:
+        import asyncio
+        from services.embedding_service import (
+            ensure_local_embedding_service,
+            stop_local_embedding_service,
+        )
+        effective_source = filtered.get("embedding_source") or await config.get_setting("embedding_source", "local")
+        if effective_source == "local":
+            local_url = (
+                filtered.get("embedding_local_url")
+                or await config.get_setting("embedding_local_url", "")
+                or config.default_local_embedding_url()
+            ).strip()
+            await ensure_local_embedding_service(local_url, wait=False)
+        elif filtered.get("embedding_source") == "custom":
+            await asyncio.to_thread(stop_local_embedding_service)
+
     all_settings = await _full_settings()
     return SettingsResponse(settings=all_settings)
 
@@ -96,7 +156,12 @@ async def preflight_check(
             and (await config.get_setting("embedding_model", ""))
         )
     else:  # local
-        embedding_ready = bool(await config.get_setting("embedding_base_url", ""))
+        from services.embedding_service import _default_local_model_dir, is_local_embedding_url
+        local_url = (await config.get_setting("embedding_local_url", "")).strip() or config.default_local_embedding_url()
+        if is_local_embedding_url(local_url):
+            embedding_ready = (_default_local_model_dir() / "config.json").exists() or bool(os.getenv("MODEL", "").strip())
+        else:
+            embedding_ready = bool(local_url)
 
     missing = []
     if not llm_ready:
@@ -162,7 +227,13 @@ class EmbeddingTestRequest(BaseModel):
 
 
 async def _mark_verified(key: str, ok: bool, db: AsyncSession) -> None:
-    await config.set_setting(key, "true" if ok else "false", db)
+    try:
+        await config.set_setting(key, "true" if ok else "false", db)
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
 
 async def _test_chat_completions(
@@ -413,6 +484,115 @@ async def test_tts(
     return {"ok": False, "msg": msg}
 
 
+class ReindexRequest(BaseModel):
+    confirm: bool = False
+
+
+@router.post("/embedding/reindex")
+async def reindex_all_documents(
+    request: Request,
+    body: ReindexRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_admin),
+) -> dict:
+    """Drop shared Milvus collections and re-vectorize all parsed files from SQLite segments without re-running OCR/LLM/VLM."""
+    import asyncio
+    from uuid import uuid4
+    from sqlalchemy import select
+    from models.file import File
+    from models.segment import Segment
+    from services.vector_service import reset_shared_collections
+
+    if not body or not body.confirm:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ui_msg("reindex_confirm_required"))
+
+    await _require_no_active_files(db)
+
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        raise HTTPException(status_code=503, detail=ui_msg("queue_unavailable_file"))
+
+    try:
+        await asyncio.to_thread(reset_shared_collections)
+    except Exception as exc:
+        logger.exception("Failed to reset shared Milvus collections before re-indexing")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ui_msg("vector_reset_failed", error=str(exc)),
+        )
+
+    seg_file_ids = select(Segment.file_id).distinct()
+    result = await db.execute(
+        select(File).where(
+            File.id.in_(seg_file_ids),
+            File.status.in_(["ready", "failed", "cancelled"]),
+        )
+    )
+    files = list(result.scalars().all())
+    to_enqueue: list[tuple[str, str]] = []
+    for f in files:
+        new_job_id = uuid4().hex
+        f.status = "pending"
+        f.job_id = new_job_id
+        f.error_message = None
+        f.processing_current = 0
+        f.processing_total = None
+        f.processing_message = ui_msg("reembedding_vectors")
+        to_enqueue.append((f.id, new_job_id))
+
+    await db.commit()
+
+    enqueued = 0
+    for fid, new_job_id in to_enqueue:
+        try:
+            await redis.enqueue_job("reembed_file_task", fid, _job_id=new_job_id)
+            enqueued += 1
+        except Exception as exc:
+            logger.warning("Could not enqueue reembed_file_task for %s: %s", fid, exc)
+
+    return {
+        "ok": True,
+        "count": enqueued,
+        "msg": ui_msg("reindex_queued", count=enqueued),
+    }
+
+
+@router.post("/embedding/local/start")
+async def start_local_embedding(
+    body: EmbeddingTestRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_admin),
+) -> dict:
+    from pathlib import Path
+    from services.embedding_service import ensure_local_embedding_service
+
+    base_url = (
+        (body.base_url if body and body.base_url else "")
+        or await config.get_setting("embedding_local_url", "")
+        or config.default_local_embedding_url()
+    ).strip()
+
+    started = await ensure_local_embedding_service(base_url, wait=True)
+    if started.get("ok") and not started.get("starting"):
+        raw_model = str(started.get("model") or "bge-m3")
+        model_label = Path(raw_model).name if "/" in raw_model or "\\" in raw_model else raw_model
+        dim = started.get("dim") or 1024
+        await _mark_verified("embedding_verified", True, db)
+        return {
+            "ok": True,
+            "base_url": started.get("base_url", base_url),
+            "model": model_label,
+            "dim": dim,
+            "msg": ui_msg("conn_ok_embedding", model=model_label, dim=dim),
+            "verified": True,
+        }
+    return {
+        "ok": False,
+        "base_url": base_url,
+        "msg": started.get("error") or ui_msg("cannot_connect_url", url=base_url),
+    }
+
+
 @router.post("/test/embedding")
 async def test_embedding(
     body: EmbeddingTestRequest,
@@ -421,8 +601,20 @@ async def test_embedding(
 ) -> dict:
     # resolve from body.source so an old embedding_source in the DB is not used
     if body.source == "local":
-        base_url = body.base_url or ""
-        model = body.model or ""
+        from services.embedding_service import ensure_local_embedding_service
+        base_url = (
+            body.base_url
+            or await config.get_setting("embedding_local_url", "")
+            or config.default_local_embedding_url()
+        ).strip()
+        started = await ensure_local_embedding_service(base_url, wait=True)
+        if not started.get("ok"):
+            await _mark_verified("embedding_verified", False, db)
+            return {
+                "ok": False,
+                "msg": started.get("error") or ui_msg("cannot_connect_url", url=base_url),
+            }
+        model = body.model or "bge-m3"
         api_key = "local"
     elif body.source == "custom":
         api_key = body.api_key or ""
@@ -446,6 +638,7 @@ async def test_embedding(
     }
 
     try:
+        from pathlib import Path
         clean_base = base_url.rstrip("/")
         target_url = clean_base if clean_base.endswith("/embeddings") else f"{clean_base}/embeddings"
         async with httpx.AsyncClient(timeout=15) as client:
@@ -453,8 +646,10 @@ async def test_embedding(
         if resp.status_code in (200, 201):
             data = resp.json()
             dim = len(data.get("data", [{}])[0].get("embedding", []))
+            raw_model = str(data.get("model") or model or "bge-m3")
+            model_label = Path(raw_model).name if ("/" in raw_model and raw_model.startswith("/")) else raw_model
             await _mark_verified("embedding_verified", True, db)
-            return {"ok": True, "msg": ui_msg("conn_ok_embedding", model=model, dim=dim), "verified": True}
+            return {"ok": True, "msg": ui_msg("conn_ok_embedding", model=model_label, dim=dim), "verified": True}
         await _mark_verified("embedding_verified", False, db)
         return {"ok": False, "msg": ui_msg("service_returned", status=f"{resp.status_code}: {resp.text[:200]}")}
     except httpx.ConnectError:
