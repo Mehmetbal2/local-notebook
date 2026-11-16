@@ -78,7 +78,7 @@
                 </div>
                 <p class="overview-card-detail">
                   {{ saved.embedding_source === 'local' ? $t('ui.localService') : $t('ui.custom') }}
-                  <template v-if="saved.embedding_source === 'local'">· {{ saved.embedding_base_url || $t('ui.urlNotSet') }}</template>
+                  <template v-if="saved.embedding_source === 'local'">· BAAI/bge-m3 ({{ saved.embedding_local_url || 'http://127.0.0.1:8001' }})</template>
                   <template v-else>· {{ saved.embedding_model || $t('ui.modelNotSet') }}</template>
                 </p>
               </div>
@@ -315,11 +315,11 @@
             <div class="form-group">
               <div class="radio-group">
                 <label class="radio-item">
-                  <input type="radio" v-model="draft.embedding_source" value="local" />
+                  <input type="radio" v-model="draft.embedding_source" value="local" @change="onEmbeddingSourceChange" />
                   <span>{{ $t('ui.localServiceSentenceTransformersGpuRequired') }}</span>
                 </label>
                 <label class="radio-item">
-                  <input type="radio" v-model="draft.embedding_source" value="custom" />
+                  <input type="radio" v-model="draft.embedding_source" value="custom" @change="onEmbeddingSourceChange" />
                   <span>{{ $t('ui.customOpenaiCompatibleApi') }}</span>
                 </label>
               </div>
@@ -360,9 +360,12 @@
 
             <template v-if="draft.embedding_source === 'local'">
               <div class="form-group">
+                <p class="field-hint" style="margin-top: 0; margin-bottom: 12px; color: var(--text-secondary); line-height: 1.5;">
+                  {{ $t('ui.localBgeM3Description') }}
+                </p>
                 <label>{{ $t('ui.serviceUrl') }}</label>
                 <input
-                  v-model="draft.embedding_base_url"
+                  v-model="draft.embedding_local_url"
                   :placeholder="$t('ui.exampleLocalEmbeddingUrl')"
                   class="input"
                 />
@@ -377,6 +380,9 @@
             <div class="form-actions">
               <button class="btn-test" @click="testEmbedding" :disabled="testing.embedding">
                 {{ testing.embedding ? $t('ui.testing') : $t('ui.testConnection') }}
+              </button>
+              <button class="btn-test" @click="reindexEmbeddingDocuments" :disabled="reindexingEmbedding">
+                {{ reindexingEmbedding ? $t('ui.reindexing') : $t('ui.reindexDocuments') }}
               </button>
               <span v-if="testResult.embedding" class="test-result" :class="testResult.embedding.ok ? 'ok' : 'fail'">
                 {{ testResult.embedding.msg }}
@@ -647,15 +653,15 @@
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="#e65100">
                   <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
                 </svg>
-                <h3>{{ $t('ui.confirmEmbeddingServiceSwitch') }}</h3>
+                <h3>{{ confirmDialog.title || $t('ui.confirmEmbeddingServiceSwitch') }}</h3>
               </div>
               <div class="modal-body">
                 <p>{{ confirmDialog.msg }}</p>
-                <p class="modal-warn">{{ $t('ui.makeSureAllFilesAndResultsAreSaved') }}</p>
+                <p class="modal-warn">{{ confirmDialog.action === 'reindex' ? $t('ui.reindexModalWarn') : $t('ui.makeSureAllFilesAndResultsAreSaved') }}</p>
               </div>
               <div class="modal-actions">
                 <button class="btn-cancel" @click="confirmDialog.show = false">{{ $t('ui.cancel') }}</button>
-                <button class="btn-danger" @click="confirmForceSave">{{ $t('ui.confirmSwitch') }}</button>
+                <button class="btn-danger" @click="confirmForceSave">{{ confirmDialog.action === 'reindex' ? $t('ui.reindexDocuments') : $t('ui.confirmSwitch') }}</button>
               </div>
             </div>
           </div>
@@ -668,7 +674,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { getSettings, updateSettings, type SettingsMap } from '../services/api'
+import { getSettings, updateSettings, checkPreflight, type SettingsMap } from '../services/api'
 import { getToken } from '../services/auth'
 import BaseUrlHelpTooltip from '../components/common/BaseUrlHelpTooltip.vue'
 import AppHeaderActions from '../components/common/AppHeaderActions.vue'
@@ -765,7 +771,8 @@ const DEFAULT_SETTINGS: SettingsMap = {
   embedding_source: 'local',
   embedding_model: '',
   embedding_api_key: '',
-  embedding_base_url: 'http://127.0.0.1:8001',
+  embedding_base_url: '',
+  embedding_local_url: 'http://127.0.0.1:8001',
 
   ocr_base_url: '',
   ocr_api_key: '',
@@ -808,11 +815,12 @@ const resolvedTtsEndpointPreview = computed(() => {
 })
 
 
+const preflightEmbeddingReady = ref(true)
 const overviewLlmReady = computed(() => !!(saved.llm_api_key && saved.llm_base_url && saved.llm_model))
 const overviewVlmReady = computed(() => !!(saved.vlm_api_key && saved.vlm_model))
 const overviewEmbeddingReady = computed(() => {
   if (saved.embedding_source === 'custom') return !!(saved.embedding_base_url && saved.embedding_model)
-  return !!saved.embedding_base_url
+  return preflightEmbeddingReady.value && Boolean((saved.embedding_local_url || '').trim())
 })
 const overviewWebSearchReady = computed(() => saved.web_search_verified === 'true')
 const overviewOcrReady = computed(() => !!(saved.ocr_api_key && saved.ocr_base_url && saved.ocr_model))
@@ -842,12 +850,19 @@ const toast = reactive({ show: false, msg: '', type: 'success' as 'success' | 'e
 
 
 const savedEmbeddingSource = ref('')
-const confirmDialog = reactive({ show: false, msg: '' })
+const reindexingEmbedding = ref(false)
+const confirmDialog = reactive({ show: false, title: '', msg: '', action: 'switch' as 'switch' | 'reindex' })
 
 
 onMounted(async () => {
   try {
-    const remote = await getSettings()
+    const [remote, preflight] = await Promise.all([
+      getSettings(),
+      checkPreflight().catch(() => null),
+    ])
+    if (preflight) {
+      preflightEmbeddingReady.value = !!preflight.embedding_ready
+    }
     if (remote.embedding_source && remote.embedding_source !== 'custom' && remote.embedding_source !== 'local') {
       remote.embedding_source = 'local'
     }
@@ -868,7 +883,7 @@ const SECTION_KEYS: Record<string, (keyof SettingsMap)[]> = {
   llm: ['llm_api_key', 'llm_base_url', 'llm_model', 'llm_api_format'],
   easytask: ['easy_task_llm'],
   vlm: ['vlm_api_key', 'vlm_base_url', 'vlm_model'],
-  embedding: ['embedding_source', 'embedding_model', 'embedding_api_key', 'embedding_base_url'],
+  embedding: ['embedding_source', 'embedding_model', 'embedding_api_key', 'embedding_base_url', 'embedding_local_url'],
   pdf: ['pdf_engine', 'ocr_base_url', 'ocr_api_key', 'ocr_model'],
   funasr: ['funasr_base_url', 'funasr_api_key', 'funasr_model'],
   tts: ['tts_base_url', 'tts_api_key', 'tts_model', 'tts_voice'],
@@ -885,8 +900,13 @@ async function save(section: string, force = false) {
   if (section === 'embedding' && !force) {
     const oldSource = savedEmbeddingSource.value
     const newSource = draft.embedding_source
-    if (oldSource && newSource && oldSource !== newSource) {
-      confirmDialog.msg = t('ui.embeddingSwitchConfirmationMessage', { from: sourceLabel(oldSource), to: sourceLabel(newSource) })
+    const modelChanged = newSource === 'custom' && (draft.embedding_model || '').trim() !== (saved.embedding_model || '').trim() && Boolean(saved.embedding_model || oldSource)
+    if ((oldSource && newSource && oldSource !== newSource) || modelChanged) {
+      const fromLabel = modelChanged ? (saved.embedding_model || sourceLabel(oldSource)) : sourceLabel(oldSource)
+      const toLabel = modelChanged ? (draft.embedding_model || sourceLabel(newSource || '')) : sourceLabel(newSource || '')
+      confirmDialog.title = t('ui.confirmEmbeddingServiceSwitch')
+      confirmDialog.msg = t('ui.embeddingSwitchConfirmationMessage', { from: fromLabel, to: toLabel })
+      confirmDialog.action = 'switch'
       confirmDialog.show = true
       return
     }
@@ -925,8 +945,13 @@ function apiFormatLabel(format?: string): string {
 }
 
 function confirmForceSave() {
+  const action = confirmDialog.action
   confirmDialog.show = false
-  save('embedding', true)
+  if (action === 'reindex') {
+    executeReindexEmbeddingDocuments()
+  } else {
+    save('embedding', true)
+  }
 }
 
 
@@ -1017,6 +1042,41 @@ async function testVlm() {
   }
 }
 
+function onEmbeddingSourceChange() {
+  testResult.embedding = null
+  if (draft.embedding_source === 'local' && !(draft.embedding_local_url || '').trim()) {
+    draft.embedding_local_url = 'http://127.0.0.1:8001'
+  }
+}
+
+function reindexEmbeddingDocuments() {
+  confirmDialog.title = t('ui.confirmReindexTitle')
+  confirmDialog.msg = t('ui.confirmReindexMessage')
+  confirmDialog.action = 'reindex'
+  confirmDialog.show = true
+}
+
+async function executeReindexEmbeddingDocuments() {
+  reindexingEmbedding.value = true
+  try {
+    const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/embedding/reindex`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ confirm: true }),
+    })
+    const data = await res.json()
+    if (res.ok && data.ok) {
+      showToast(data.msg || t('ui.savedSuccessfully'), 'success')
+    } else {
+      showToast(data.detail || data.msg || t('ui.saveFailedCheckNetwork'), 'error')
+    }
+  } catch {
+    showToast(t('ui.saveFailedCheckNetwork'), 'error')
+  } finally {
+    reindexingEmbedding.value = false
+  }
+}
+
 async function testEmbedding() {
   testing.embedding = true
   testResult.embedding = null
@@ -1030,8 +1090,8 @@ async function testEmbedding() {
       body.base_url = draft.embedding_base_url || undefined
       body.model = draft.embedding_model || undefined
     } else if (draft.embedding_source === 'local') {
-      body.base_url = draft.embedding_base_url || undefined
-      body.model = draft.embedding_model || undefined
+      body.base_url = draft.embedding_local_url || 'http://127.0.0.1:8001'
+      body.model = 'bge-m3'
     }
     const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/settings/test/embedding`, {
       method: 'POST',

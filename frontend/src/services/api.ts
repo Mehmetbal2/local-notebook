@@ -2206,6 +2206,7 @@ export interface SettingsMap {
   embedding_model?: string
   embedding_api_key?: string
   embedding_base_url?: string
+  embedding_local_url?: string
   ocr_base_url?: string
   ocr_api_key?: string
   ocr_model?: string

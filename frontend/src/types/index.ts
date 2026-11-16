@@ -20,7 +20,7 @@ export interface FileInfo {
   project_id: string
   file_name: string
   file_type: string
-  status: 'pending' | 'processing' | 'ready' | 'error' | 'failed' | 'cancelled'
+  status: 'pending' | 'processing' | 'ready' | 'failed' | 'cancelled'
   error_message?: string
   processing_current?: number | null
   processing_total?: number | null

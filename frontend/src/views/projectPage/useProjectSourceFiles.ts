@@ -400,17 +400,18 @@ export function useProjectSourceFiles({
     }
   }
 
-  /** Start processing stopped or failed files again, from the beginning. */
+  /** Re-embed ready files from stored segments, or start parsing stopped/failed files again. */
   async function handleReprocessFiles(fileIds: string[]) {
     openMenuFileId.value = null
     const ids = fileIds.filter(id => {
       const status = files.value.find(f => f.id === id)?.status
-      return status === 'cancelled' || status === 'failed'
+      return status === 'cancelled' || status === 'failed' || status === 'ready'
     })
     if (ids.length === 0) return
 
     let started = 0
     let lastError = ''
+    let shouldRefresh = false
     for (const fileId of ids) {
       try {
         const updated = await reprocessFile(fileId, getModelOutputLanguage())
@@ -420,9 +421,15 @@ export function useProjectSourceFiles({
         started++
       } catch (error: any) {
         console.error('Failed to reprocess file:', error)
+        if (error?.response?.status === 409) {
+          shouldRefresh = true
+        }
         const msg = error?.response?.data?.detail
         lastError = typeof msg === 'string' ? msg : t('ui.reprocessFailed')
       }
+    }
+    if (shouldRefresh) {
+      await loadFiles()
     }
     if (started > 0) {
       showToast(started === 1 ? t('ui.fileProcessingRestarted') : t('ui.filesProcessingRestarted', { count: started }), 'success')
