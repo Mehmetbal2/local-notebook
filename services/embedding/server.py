@@ -5,7 +5,7 @@ OpenAI-compatible embedding server backed by sentence-transformers.
 
 Startup:
     python server.py                        # auto-detect device
-    MODEL=BAAI/bge-small-zh-v1.5 python server.py
+    MODEL=../../local-notebook-data/models/bge-m3 python server.py
     uvicorn server:app --port 8001
 
 Device priority: CUDA > MPS (Apple Silicon) > CPU
@@ -34,7 +34,8 @@ logger = logging.getLogger("embedding-server")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MODEL_NAME = os.getenv("MODEL", "BAAI/bge-small-zh-v1.5")
+_DEFAULT_MODEL_DIR = _MODELS_DIR / "bge-m3"
+MODEL_NAME = os.getenv("MODEL", str(_DEFAULT_MODEL_DIR))
 PORT = int(os.getenv("PORT", "8001"))
 MAX_BATCH = int(os.getenv("MAX_BATCH", "64"))
 
@@ -53,14 +54,22 @@ model: SentenceTransformer | None = None
 device: str = "cpu"
 
 
+def _embedding_dim(m: SentenceTransformer) -> int | None:
+    fn = getattr(m, "get_embedding_dimension", None) or getattr(m, "get_sentence_embedding_dimension", None)
+    return fn() if callable(fn) else None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global model, device
+    model_path = Path(MODEL_NAME)
+    if (MODEL_NAME == str(_DEFAULT_MODEL_DIR) or MODEL_NAME.startswith(("/", "./", "../"))) and not model_path.exists():
+        raise RuntimeError(f"Local embedding model directory not found: {model_path.resolve()}")
     device = _detect_device()
     logger.info(f"Loading model '{MODEL_NAME}' on device '{device}' ...")
     t0 = time.time()
     model = SentenceTransformer(MODEL_NAME, device=device)
-    logger.info(f"Model loaded in {time.time() - t0:.1f}s  |  dim={model.get_sentence_embedding_dimension()}")
+    logger.info(f"Model loaded in {time.time() - t0:.1f}s  |  dim={_embedding_dim(model)}")
     yield
     model = None
 
@@ -108,7 +117,7 @@ def health() -> dict:
         "status": "ok",
         "model": MODEL_NAME,
         "device": device,
-        "dim": model.get_sentence_embedding_dimension() if model else None,
+        "dim": _embedding_dim(model) if model else None,
     }
 
 

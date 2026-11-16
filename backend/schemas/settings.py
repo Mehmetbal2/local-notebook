@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 from pydantic import BaseModel
 
@@ -16,6 +17,7 @@ SETTING_KEYS = {
     "embedding_model",
     "embedding_api_key",
     "embedding_base_url",
+    "embedding_local_url",
     "ocr_base_url",
     "ocr_api_key",
     "ocr_model",
@@ -41,6 +43,7 @@ SETTING_KEYS = {
 SETTING_DEFAULTS = {
     "llm_api_format": "openai",
     "embedding_source": "local",
+    "embedding_local_url": f"http://127.0.0.1:{os.getenv('EMBEDDING_PORT', '8001')}",
     "tts_voice": "deniz",
     # auto: local PyMuPDF when the PDF has a text layer, the OCR service otherwise
     "pdf_engine": "auto",

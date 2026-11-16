@@ -20,7 +20,7 @@ pip install -r requirements.txt
 # Linux CPU: pip install torch --index-url https://download.pytorch.org/whl/cpu
 # Linux GPU: pip install torch --index-url https://download.pytorch.org/whl/cu121
 
-MODEL=BAAI/bge-small-zh-v1.5 python server.py
+MODEL=../../local-notebook-data/models/bge-m3 python server.py
 ```
 
 接口：`POST http://localhost:8001/embeddings`（OpenAI-compatible）

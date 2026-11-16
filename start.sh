@@ -52,7 +52,7 @@ export PYTHONPATH="$PROJECT_ROOT/backend:$PROJECT_ROOT/backend/packages:${PYTHON
 BACKEND_PORT="${BACKEND_PORT:-8081}"
 FRONTEND_PORT="${FRONTEND_PORT:-8080}"
 EMBEDDING_PORT="${EMBEDDING_PORT:-8001}"
-START_EMBEDDING="${START_EMBEDDING:-0}"
+START_EMBEDDING="${START_EMBEDDING:-auto}"
 SEARXNG_PORT="${SEARXNG_PORT:-8888}"
 START_SEARXNG="${LOCAL_NOTEBOOK_SEARXNG:-1}"
 SEARXNG_COMPOSE="$PROJECT_ROOT/services/searxng/docker-compose.yml"
@@ -67,6 +67,7 @@ NODE_BIN="$PROJECT_ROOT/.node/bin/node"
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
 EMBEDDING_PID_FILE="$RUN_DIR/embedding.pid"
+EMBEDDING_PORT_FILE="$RUN_DIR/embedding.port"
 
 is_running() {
   local pid_file="$1"
@@ -78,6 +79,17 @@ is_running() {
     fi
   fi
   return 1
+}
+
+rotate_log() {
+  local log_file="$1"
+  if [[ -f "$log_file" ]]; then
+    local size
+    size="$(wc -c < "$log_file" 2>/dev/null || echo 0)"
+    if (( size > 10485760 )); then
+      mv -f "$log_file" "${log_file}.1" 2>/dev/null || true
+    fi
+  fi
 }
 
 stop_service() {
@@ -100,6 +112,29 @@ stop_service() {
 }
 
 # ── SearXNG (web search, runs in Docker) ────────────────────────────────────
+embedding_enabled() {
+  if [[ "$START_EMBEDDING" == "0" ]]; then
+    return 1
+  fi
+  if [[ -z "${MODEL:-}" && ! -f "$MODELS_DIR/bge-m3/config.json" ]]; then
+    return 1
+  fi
+  if [[ "$START_EMBEDDING" == "1" ]]; then
+    return 0
+  fi
+  local db_file="$DATA_DIR/local_notebook.db"
+  if [[ ! -f "$db_file" ]]; then
+    return 0
+  fi
+  local src=""
+  if command -v sqlite3 >/dev/null 2>&1; then
+    src="$(sqlite3 "$db_file" "SELECT value FROM settings WHERE key='embedding_source' LIMIT 1;" 2>/dev/null || true)"
+  else
+    src="$("$PYTHON_BIN" -c "import sqlite3; c=sqlite3.connect('$db_file'); r=c.execute(\"SELECT value FROM settings WHERE key='embedding_source' LIMIT 1\").fetchone(); print(r[0] if r else '')" 2>/dev/null || true)"
+  fi
+  [[ -z "$src" || "$src" == "local" ]]
+}
+
 searxng_enabled() {
   [[ "$START_SEARXNG" == "1" ]] && [[ -f "$SEARXNG_COMPOSE" ]] && command -v docker >/dev/null 2>&1
 }
@@ -140,7 +175,8 @@ start_searxng() {
   fi
   export SEARXNG_SECRET
   echo "Starting SearXNG on http://127.0.0.1:$SEARXNG_PORT ..."
-  if ! docker compose -f "$SEARXNG_COMPOSE" up -d >"$LOG_DIR/searxng.log" 2>&1; then
+  rotate_log "$LOG_DIR/searxng.log"
+  if ! docker compose -f "$SEARXNG_COMPOSE" up -d >>"$LOG_DIR/searxng.log" 2>&1; then
     echo "SearXNG could not be started; see $LOG_DIR/searxng.log"
     return 0
   fi
@@ -186,15 +222,32 @@ start_services() {
 
   start_searxng
 
+  if embedding_enabled; then
+    if is_running "$EMBEDDING_PID_FILE"; then
+      echo "Embedding service is already running (PID $(cat "$EMBEDDING_PID_FILE"))."
+    else
+      echo "Starting Local Embedding Service on http://localhost:$EMBEDDING_PORT ..."
+      rotate_log "$LOG_DIR/embedding.log"
+      (
+        cd "$PROJECT_ROOT/services/embedding"
+        PORT="$EMBEDDING_PORT" nohup "$PYTHON_BIN" server.py \
+          < /dev/null >> "$LOG_DIR/embedding.log" 2>&1 &
+        echo $! > "$EMBEDDING_PID_FILE"
+        echo "$EMBEDDING_PORT" > "$EMBEDDING_PORT_FILE"
+      )
+    fi
+  fi
+
   if is_running "$BACKEND_PID_FILE"; then
     echo "Backend is already running (PID $(cat "$BACKEND_PID_FILE"))."
   else
     echo "Starting Backend on http://localhost:$BACKEND_PORT ..."
+    rotate_log "$LOG_DIR/backend.log"
     (
       cd "$PROJECT_ROOT/backend"
       PORT="$BACKEND_PORT" nohup "$PYTHON_BIN" -m uvicorn main:app \
         --host 0.0.0.0 --port "$BACKEND_PORT" \
-        < /dev/null > "$LOG_DIR/backend.log" 2>&1 &
+        < /dev/null >> "$LOG_DIR/backend.log" 2>&1 &
       echo $! > "$BACKEND_PID_FILE"
     )
   fi
@@ -203,27 +256,14 @@ start_services() {
     echo "Frontend is already running (PID $(cat "$FRONTEND_PID_FILE"))."
   else
     echo "Starting Frontend on http://localhost:$FRONTEND_PORT ..."
+    rotate_log "$LOG_DIR/frontend.log"
     (
       cd "$PROJECT_ROOT/frontend"
       VITE_PROXY_TARGET="http://localhost:$BACKEND_PORT" nohup "$NODE_BIN" ./node_modules/vite/bin/vite.js \
         --host 0.0.0.0 --port "$FRONTEND_PORT" \
-        < /dev/null > "$LOG_DIR/frontend.log" 2>&1 &
+        < /dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
       echo $! > "$FRONTEND_PID_FILE"
     )
-  fi
-
-  if [[ "$START_EMBEDDING" == "1" ]]; then
-    if is_running "$EMBEDDING_PID_FILE"; then
-      echo "Embedding service is already running (PID $(cat "$EMBEDDING_PID_FILE"))."
-    else
-      echo "Starting Local Embedding Service on http://localhost:$EMBEDDING_PORT ..."
-      (
-        cd "$PROJECT_ROOT/services/embedding"
-        PORT="$EMBEDDING_PORT" nohup "$PYTHON_BIN" server.py \
-          < /dev/null > "$LOG_DIR/embedding.log" 2>&1 &
-        echo $! > "$EMBEDDING_PID_FILE"
-      )
-    fi
   fi
 
   echo ""
@@ -233,7 +273,7 @@ start_services() {
   if searxng_enabled && docker_ready; then
     echo "  SearXNG:  http://127.0.0.1:$SEARXNG_PORT"
   fi
-  if [[ "$START_EMBEDDING" == "1" ]]; then
+  if embedding_enabled; then
     echo "  Embedding: http://localhost:$EMBEDDING_PORT/health"
   fi
   echo "  Logs:     $LOG_DIR/"
@@ -269,6 +309,7 @@ case "$CMD" in
     stop_service "Frontend" "$FRONTEND_PID_FILE"
     stop_service "Backend" "$BACKEND_PID_FILE"
     stop_service "Embedding" "$EMBEDDING_PID_FILE"
+    rm -f "$EMBEDDING_PORT_FILE"
     # A restart keeps SearXNG running (start_services makes sure it is up).
     if [[ "${LOCAL_NOTEBOOK_KEEP_SEARXNG:-0}" != "1" ]]; then
       stop_searxng

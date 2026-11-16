@@ -171,6 +171,10 @@ async def resolve_vlm_config() -> tuple[str | None, str | None, str | None]:
     return api_key or None, base_url or None, model or None
 
 
+def default_local_embedding_url() -> str:
+    return f"http://127.0.0.1:{os.getenv('EMBEDDING_PORT', '8001')}"
+
+
 async def resolve_embedding_config() -> tuple[str, str, str, str]:
     source = await get_setting("embedding_source", "local")
 
@@ -180,6 +184,5 @@ async def resolve_embedding_config() -> tuple[str, str, str, str]:
         api_key = await get_setting("embedding_api_key", "")
         return "api", base_url or "", model or "", api_key or ""
 
-    base_url = await get_setting("embedding_base_url", "")
-    model = await get_setting("embedding_model", "")
-    return "local", base_url or "", model or "", "local"
+    local_url = (await get_setting("embedding_local_url", "")).strip() or default_local_embedding_url()
+    return "local", local_url, "bge-m3", "local"

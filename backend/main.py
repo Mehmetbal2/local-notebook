@@ -83,6 +83,16 @@ async def lifespan(app: FastAPI):
         await config.load_settings(db)
     logger.info("Settings cache loaded")
 
+    try:
+        if await config.get_setting("embedding_source", "local") == "local":
+            from services.embedding_service import ensure_local_embedding_service
+            emb_local_url = (await config.get_setting("embedding_local_url", "")).strip() or config.default_local_embedding_url()
+            app.state.embedding_startup_task = asyncio.create_task(
+                ensure_local_embedding_service(emb_local_url, wait=False)
+            )
+    except Exception:
+        logger.exception("Could not auto-start local embedding service")
+
     # One-time repair of notes saved from chat with citations resolved against the wrong turn.
     try:
         from routes.feature_routes import CHAT_NOTE_REPAIR_SETTING, repair_chat_note_citations
