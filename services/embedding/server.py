@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Local Notebook Embedding Service",
     description="OpenAI-compatible /embeddings endpoint backed by sentence-transformers",
-    version="0.1.0",
+    version="1.0.0",
     lifespan=lifespan,
 )
 

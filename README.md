@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Mehmetbal2/local-notebook/releases/latest"><img alt="Son sürüm" src="https://img.shields.io/github/v/release/Mehmetbal2/local-notebook?label=s%C3%BCr%C3%BCm&color=0b57d0"></a>
   <img alt="Lisans: Apache-2.0" src="https://img.shields.io/badge/lisans-Apache--2.0-0b57d0">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776ab">
   <img alt="Vue 3" src="https://img.shields.io/badge/vue-3-42b883">
@@ -71,6 +72,8 @@
 ## Kurulum
 
 **Gerekenler:** Python 3.12+ (3.13 önerilir), Node.js 20+, git. Web araması için isteğe bağlı olarak Docker (macOS'ta OrbStack veya Docker Desktop).
+
+Kaynak kodu [son sürüm sayfasından](https://github.com/Mehmetbal2/local-notebook/releases/latest) zip olarak indirebilir ya da git ile alabilirsiniz:
 
 ```bash
 git clone https://github.com/Mehmetbal2/local-notebook.git
@@ -150,6 +153,10 @@ cd frontend && npx vue-tsc -b && npx vite build
 ```
 
 Her push ve pull request'te testler GitHub Actions ile çalışır.
+
+## Sürümler
+
+Değişiklikler [CHANGELOG.md](CHANGELOG.md) dosyasında, indirilebilir sürümler [Releases](https://github.com/Mehmetbal2/local-notebook/releases) sayfasındadır.
 
 ## Lisans
 

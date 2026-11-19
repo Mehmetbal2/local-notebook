@@ -22,6 +22,8 @@ from arq.connections import RedisSettings
 from arq.worker import Worker
 from dotenv import load_dotenv
 from fastapi import FastAPI
+
+from version import __version__
 from fastapi.middleware.cors import CORSMiddleware
 
 from paths import BACKEND_DIR, PROJECT_ROOT, get_data_dir, get_upload_dir
@@ -353,8 +355,8 @@ class UILanguageMiddleware:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Local Notebook",
-        description="Local-first knowledge base and chat for paper reading",
-        version="0.1.0",
+        description="Local-first research notebook with passage-level citations",
+        version=__version__,
         lifespan=lifespan,
     )
 
@@ -409,7 +411,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["health"])
     async def health() -> dict:
-        return {"status": "ok", "version": "0.1.0"}
+        return {"status": "ok", "version": __version__}
 
     @app.get("/health/redis", tags=["health"])
     async def health_redis() -> dict:

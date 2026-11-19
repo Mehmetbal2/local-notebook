@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Mehmetbal2/local-notebook/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Mehmetbal2/local-notebook?label=release&color=0b57d0"></a>
   <img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0b57d0">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776ab">
   <img alt="Vue 3" src="https://img.shields.io/badge/vue-3-42b883">
@@ -73,6 +74,8 @@ The screenshots show the Turkish interface; English and Chinese are available fr
 ## Installation
 
 **Requirements:** Python 3.12+ (3.13 recommended), Node.js 20+, git. Docker (OrbStack or Docker Desktop on macOS) is optional and only needed for web search.
+
+Download the source as a zip from the [latest release](https://github.com/Mehmetbal2/local-notebook/releases/latest), or clone it with git:
 
 ```bash
 git clone https://github.com/Mehmetbal2/local-notebook.git
@@ -152,6 +155,10 @@ cd frontend && npx vue-tsc -b && npx vite build
 ```
 
 GitHub Actions runs the tests on every push and pull request.
+
+## Releases
+
+Changes are listed in [CHANGELOG.md](CHANGELOG.md) (Turkish); downloadable versions are on the [Releases](https://github.com/Mehmetbal2/local-notebook/releases) page.
 
 ## License
 

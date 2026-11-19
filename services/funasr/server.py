@@ -102,7 +102,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Local Notebook FunASR Service",
     description="Audio transcription with speaker diarization using FunASR",
-    version="0.1.0",
+    version="1.0.0",
     lifespan=lifespan,
 )
 
