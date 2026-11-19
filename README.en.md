@@ -144,6 +144,8 @@ Use **Settings → System status → Backup and restore** for backups. Details: 
 
 Operations, security defaults, environment variables and troubleshooting: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
+A detailed Turkish guide to every feature, the internal pipelines, limits and requirements (with diagrams): [docs/KILAVUZ.md](docs/KILAVUZ.md).
+
 ## Development
 
 ```bash

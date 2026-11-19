@@ -142,6 +142,8 @@ Yedek almak için **Ayarlar → Sistem durumu → Yedekleme ve geri yükleme** b
 
 İşletim, güvenlik varsayılanları, ortam değişkenleri ve sorun giderme için [docs/OPERATIONS.md](docs/OPERATIONS.md) belgesine bakın.
 
+Uygulamanın tüm işlevlerini, iç işleyişini, sınırlarını ve şartlarını şemalarla anlatan Türkçe kılavuz: [docs/KILAVUZ.md](docs/KILAVUZ.md).
+
 ## Geliştirme
 
 ```bash
