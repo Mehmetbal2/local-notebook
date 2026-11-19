@@ -4,6 +4,7 @@ import router from './router'
 import { i18n } from './i18n'
 import { vKeyActivate } from './directives/keyActivate'
 import { installUiLanguageFetch } from './services/uiLanguageHeader'
+import { installGlobalTooltip } from './utils/globalTooltip'
 import './assets/main.css'
 
 // Favicons in web citations come from arbitrary sites; when one fails to load,
@@ -22,6 +23,7 @@ document.addEventListener(
 )
 
 installUiLanguageFetch()
+installGlobalTooltip()
 
 const app = createApp(App)
 app.directive('key-activate', vKeyActivate)

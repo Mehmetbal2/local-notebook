@@ -549,44 +549,6 @@ function regenerateTooltip(index: number, msg: Message): string {
   cursor: not-allowed;
 }
 
-.user-action-btn::before,
-.user-action-btn::after {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s, visibility 0.2s;
-  pointer-events: none;
-}
-
-.user-action-btn::before {
-  content: attr(data-tooltip);
-  bottom: calc(100% + 6px);
-  padding: 4px 8px;
-  background: var(--text-primary);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 400;
-  border-radius: 4px;
-  white-space: nowrap;
-}
-
-.user-action-btn::after {
-  content: '';
-  bottom: calc(100% + 1px);
-  width: 8px;
-  height: 4px;
-  background: var(--text-primary);
-  clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
-}
-
-.user-action-btn:hover::before,
-.user-action-btn:hover::after {
-  opacity: 1;
-  visibility: visible;
-}
-
 .user-message.editing {
   width: 80%;
   background: transparent;
@@ -730,45 +692,6 @@ function regenerateTooltip(index: number, msg: Message): string {
 
 .message-actions .action-btn {
   position: relative;
-}
-
-.message-actions .action-btn::before,
-.message-actions .action-btn::after {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s, visibility 0.2s;
-  pointer-events: none;
-}
-
-.message-actions .action-btn::before {
-  content: attr(data-tooltip);
-  bottom: calc(100% + 6px);
-  padding: 6px 10px;
-  background: var(--text-primary);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 400;
-  border-radius: 6px;
-  white-space: nowrap;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.message-actions .action-btn::after {
-  content: '';
-  bottom: calc(100% + 1px);
-  width: 10px;
-  height: 5px;
-  background: var(--text-primary);
-  clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
-}
-
-.message-actions .action-btn:hover::before,
-.message-actions .action-btn:hover::after {
-  opacity: 1;
-  visibility: visible;
 }
 
 .assistant-content {
