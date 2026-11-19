@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -12,7 +13,54 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies.database import get_db
 from models.user import User
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+logger = logging.getLogger(__name__)
+
+# Values that shipped in the repository or in the example .env. A JWT signed with one of
+# these is forgeable by anyone who has seen the source, so they are never used as-is.
+_INSECURE_SECRET_KEYS = {
+    "change-me-in-production",
+    "local-notebook-universal-secret-key-change-in-production",
+}
+
+
+def _load_or_create_secret_key() -> str:
+    """Return a usable signing key, persisting a generated one under the data dir.
+
+    A key generated here survives restarts (otherwise every restart would invalidate all
+    sessions). An explicitly configured, non-placeholder SECRET_KEY always wins.
+    """
+    env_value = (os.getenv("SECRET_KEY") or "").strip()
+    if env_value and env_value not in _INSECURE_SECRET_KEYS:
+        return env_value
+
+    from paths import get_data_dir
+
+    key_path = get_data_dir() / "secret_key"
+    try:
+        if key_path.exists():
+            stored = key_path.read_text(encoding="utf-8").strip()
+            if stored:
+                return stored
+        import secrets
+
+        generated = secrets.token_urlsafe(48)
+        fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(generated + "\n")
+        logger.warning(
+            "SECRET_KEY was missing or an insecure placeholder; generated a persistent key at %s. "
+            "Existing sign-ins are invalidated once.",
+            key_path,
+        )
+        return generated
+    except Exception:
+        logger.exception("Could not persist a SECRET_KEY; using a temporary key for this run")
+        import secrets
+
+        return secrets.token_urlsafe(48)
+
+
+SECRET_KEY = _load_or_create_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
 REFRESH_TOKEN_EXPIRE_DAYS = 30

@@ -65,64 +65,92 @@
         </table>
       </div>
 
-      <section class="usage-section">
-        <div class="section-header">
+      <section class="stats-section">
+        <div class="stats-header">
           <div>
-            <h2>{{ $t('ui.modelUsage') }}</h2>
-            <p>{{ $t('ui.usageGroupedByDateUserModel') }}</p>
+            <h2>{{ $t('ui.userStats') }}</h2>
+            <p>{{ $t('ui.userStatsHint') }}</p>
           </div>
-          <div class="usage-filters">
-            <input v-model="usageFilters.start_date" type="date" />
-            <input v-model="usageFilters.end_date" type="date" />
-            <select v-model="usageFilters.user_id">
-              <option value="">{{ $t('ui.allUsers') }}</option>
-              <option v-for="user in users" :key="user.user_id" :value="user.user_id">
-                {{ user.username }}
-              </option>
-            </select>
-            <button class="plain-btn" @click="loadUsage">{{ $t('ui.refresh') }}</button>
+          <div class="period-switch" role="group" :aria-label="$t('ui.userStats')">
+            <button
+              v-for="days in PERIODS"
+              :key="days"
+              :class="{ active: statsDays === days }"
+              :aria-pressed="statsDays === days"
+              @click="setStatsDays(days)"
+            >
+              {{ $t('ui.userStatsDays', { count: days }) }}
+            </button>
           </div>
         </div>
 
-        <div class="usage-summary">
-          <span>{{ $t('ui.usageCallsCount', { count: formatNumber(usageTotals.call_count) }) }}</span>
-          <span>{{ $t('ui.usageTotalTokensCount', { count: formatNumber(usageTotals.total_tokens) }) }}</span>
-          <span>{{ $t('ui.usageInputCount', { count: formatNumber(usageTotals.input_uncached_tokens) }) }}</span>
-          <span>{{ $t('ui.usageCacheReadCount', { count: formatNumber(usageTotals.input_cache_read_tokens) }) }}</span>
-          <span>{{ $t('ui.usageCacheWriteCount', { count: formatNumber(usageTotals.input_cache_write_tokens) }) }}</span>
-          <span>{{ $t('ui.usageOutputCount', { count: formatNumber(usageTotals.output_tokens) }) }}</span>
+        <div v-if="stats" class="stat-cards" :class="{ dim: statsLoading }">
+          <div class="stat-card">
+            <span>{{ $t('ui.userStatsProjects') }}</span>
+            <strong>{{ formatNumber(stats.totals.projects) }}</strong>
+            <small>{{ $t('ui.userStatsSourcesSub', { count: formatNumber(stats.totals.files) }) }}</small>
+          </div>
+          <div class="stat-card">
+            <span>{{ $t('ui.userStatsStorage') }}</span>
+            <strong>{{ formatBytes(stats.totals.storage_bytes) }}</strong>
+            <small>{{ $t('ui.userStatsReadySub', { ready: formatNumber(stats.totals.ready_files), total: formatNumber(stats.totals.files) }) }}</small>
+          </div>
+          <div class="stat-card">
+            <span>{{ $t('ui.userStatsMessages') }}</span>
+            <strong>{{ formatNumber(stats.totals.messages) }}</strong>
+            <small>{{ $t('ui.userStatsSessionsSub', { count: formatNumber(stats.totals.sessions) }) }}</small>
+          </div>
+          <div class="stat-card">
+            <span>{{ $t('ui.userStatsLlmCard') }} · {{ $t('ui.userStatsDays', { count: stats.period_days }) }}</span>
+            <strong>{{ formatNumber(stats.totals.tokens) }}</strong>
+            <small>{{ $t('ui.userStatsCallsSub', { count: formatNumber(stats.totals.llm_calls), active: stats.totals.active_users }) }}</small>
+          </div>
         </div>
 
-        <div v-if="usageLoading" class="state-row">{{ $t('ui.loadingUsage') }}</div>
-        <div v-else-if="usageRows.length === 0" class="state-row">{{ $t('ui.noUsageRecords') }}</div>
-        <div v-else class="table-wrap usage-table">
+        <div v-if="statsLoading && !stats" class="state-row">{{ $t('ui.loading') }}</div>
+        <div v-else-if="stats" class="table-wrap stats-table" :class="{ dim: statsLoading }">
           <table>
             <thead>
               <tr>
-                <th>{{ $t('ui.date') }}</th>
-                <th>{{ $t('ui.defaultUser') }}</th>
-                <th>{{ $t('ui.model') }}</th>
-                <th>{{ $t('ui.count') }}</th>
-                <th>{{ $t('ui.uncachedInput') }}</th>
-                <th>{{ $t('ui.cacheRead') }}</th>
-                <th>{{ $t('ui.cacheWrite') }}</th>
-                <th>{{ $t('ui.outputTokens') }}</th>
-                <th>{{ $t('ui.total') }}</th>
+                <th>{{ $t('ui.username') }}</th>
+                <th class="num">{{ $t('ui.userStatsProjects') }}</th>
+                <th class="num">{{ $t('ui.userStatsSources') }}</th>
+                <th class="num">{{ $t('ui.userStatsStorage') }}</th>
+                <th class="num">{{ $t('ui.userStatsMessages') }}</th>
+                <th class="num">{{ $t('ui.userStatsOutputs') }}</th>
+                <th class="num">{{ $t('ui.userStatsCalls') }}</th>
+                <th>{{ $t('ui.userStatsShare') }}</th>
+                <th>{{ $t('ui.userStatsLastActive') }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in usageRows" :key="`${row.usage_date}-${row.user_id}-${row.model}`">
-                <td>{{ row.usage_date }}</td>
-                <td>{{ row.username }}</td>
+              <tr v-for="row in stats.rows" :key="row.user_id || 'unassigned'" :class="{ muted: !row.user_id }">
                 <td>
-                  <span class="model-name">{{ row.model }}</span>
+                  <div class="stat-user">
+                    <span class="avatar" :class="row.role">{{ initial(row) }}</span>
+                    <span>{{ row.user_id ? row.username : $t('ui.userStatsUnassigned') }}</span>
+                  </div>
                 </td>
-                <td>{{ formatNumber(row.call_count) }}</td>
-                <td>{{ formatNumber(row.input_uncached_tokens) }}</td>
-                <td>{{ formatNumber(row.input_cache_read_tokens) }}</td>
-                <td>{{ formatNumber(row.input_cache_write_tokens) }}</td>
-                <td>{{ formatNumber(row.output_tokens) }}</td>
-                <td>{{ formatNumber(row.total_tokens) }}</td>
+                <td class="num">{{ formatNumber(row.projects) }}</td>
+                <td class="num">
+                  {{ formatNumber(row.files) }}
+                  <small v-if="row.files && row.ready_files !== row.files" class="sub">
+                    {{ $t('ui.userStatsReadyOf', { ready: row.ready_files, total: row.files }) }}
+                  </small>
+                </td>
+                <td class="num">{{ formatBytes(row.storage_bytes) }}</td>
+                <td class="num">{{ formatNumber(row.messages) }}</td>
+                <td class="num">{{ formatNumber(row.outputs) }}</td>
+                <td class="num">{{ formatNumber(row.llm_calls) }}</td>
+                <td>
+                  <div class="share" :title="`${formatNumber(row.tokens)} ${$t('ui.userStatsTokens')}`">
+                    <div class="share-bar"><span :style="{ width: `${tokenShare(row)}%` }" /></div>
+                    <span class="share-value">{{ formatNumber(row.tokens) }}</span>
+                  </div>
+                </td>
+                <td :title="row.last_active_at ? formatDateTime(row.last_active_at) : ''">
+                  {{ row.last_active_at ? relativeTime(row.last_active_at) : $t('ui.userStatsNoActivity') }}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -176,12 +204,12 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   createAdminUser,
-  getAdminUsage,
   getAdminUsers,
+  getAdminUserStats,
   resetAdminUserPassword,
-  type AdminUsageRow,
-  type AdminUsageTotals,
   type AdminUser,
+  type AdminUserStatsResponse,
+  type AdminUserStatsRow,
 } from '../services/api'
 import AppHeaderActions from '../components/common/AppHeaderActions.vue'
 import { locale, t } from '../i18n'
@@ -192,16 +220,6 @@ const router = useRouter()
 const users = ref<AdminUser[]>([])
 const total = ref(0)
 const loading = ref(true)
-const usageLoading = ref(true)
-const usageRows = ref<AdminUsageRow[]>([])
-const usageTotals = reactive<AdminUsageTotals>({
-  call_count: 0,
-  input_uncached_tokens: 0,
-  input_cache_read_tokens: 0,
-  input_cache_write_tokens: 0,
-  output_tokens: 0,
-  total_tokens: 0,
-})
 const submitting = ref(false)
 const showCreate = ref(false)
 const resetTarget = ref<AdminUser | null>(null)
@@ -211,12 +229,6 @@ const formError = ref('')
 const createForm = reactive({
   username: '',
   password: '',
-})
-
-const usageFilters = reactive({
-  start_date: toDateInputValue(addDays(new Date(), -29)),
-  end_date: toDateInputValue(new Date()),
-  user_id: '',
 })
 
 const adminCount = computed(() => users.value.filter(user => user.role === 'admin').length)
@@ -239,21 +251,6 @@ function formatDateTime(value: string): string {
   })
 }
 
-function addDays(date: Date, days: number): Date {
-  const next = new Date(date)
-  next.setDate(next.getDate() + days)
-  return next
-}
-
-function toDateInputValue(date: Date): string {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-  return local.toISOString().slice(0, 10)
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat(locale.value).format(value || 0)
-}
-
 async function loadUsers() {
   try {
     loading.value = true
@@ -264,23 +261,6 @@ async function loadUsers() {
     toast(errorMessage(error), 'error')
   } finally {
     loading.value = false
-  }
-}
-
-async function loadUsage() {
-  try {
-    usageLoading.value = true
-    const response = await getAdminUsage({
-      start_date: usageFilters.start_date || undefined,
-      end_date: usageFilters.end_date || undefined,
-      user_id: usageFilters.user_id || undefined,
-    })
-    usageRows.value = response.rows
-    Object.assign(usageTotals, response.totals)
-  } catch (error) {
-    toast(errorMessage(error), 'error')
-  } finally {
-    usageLoading.value = false
   }
 }
 
@@ -352,9 +332,69 @@ async function submitReset() {
   }
 }
 
+const PERIODS = [7, 30, 90] as const
+const stats = ref<AdminUserStatsResponse | null>(null)
+const statsLoading = ref(false)
+const statsDays = ref<number>(30)
+
+async function loadStats() {
+  statsLoading.value = true
+  try {
+    stats.value = await getAdminUserStats(statsDays.value)
+  } catch (error) {
+    toast(errorMessage(error), 'error')
+  } finally {
+    statsLoading.value = false
+  }
+}
+
+function setStatsDays(days: number) {
+  if (statsDays.value === days) return
+  statsDays.value = days
+  void loadStats()
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat(locale.value).format(value || 0)
+}
+
+function formatBytes(value: number): string {
+  if (!value) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unit = 0
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024
+    unit += 1
+  }
+  return `${size.toFixed(unit === 0 || size >= 10 ? 0 : 1)} ${units[unit]}`
+}
+
+function relativeTime(value: string): string {
+  const seconds = Math.round((parseServerDate(value).getTime() - Date.now()) / 1000)
+  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
+    ['year', 31536000], ['month', 2592000], ['week', 604800],
+    ['day', 86400], ['hour', 3600], ['minute', 60],
+  ]
+  const rtf = new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' })
+  for (const [unit, size] of steps) {
+    if (Math.abs(seconds) >= size) return rtf.format(Math.round(seconds / size), unit)
+  }
+  return rtf.format(0, 'minute')
+}
+
+function tokenShare(row: AdminUserStatsRow): number {
+  const total = stats.value?.totals.tokens || 0
+  return total ? Math.max(row.tokens ? 2 : 0, Math.round((row.tokens / total) * 100)) : 0
+}
+
+function initial(row: AdminUserStatsRow): string {
+  return row.user_id ? (row.username.trim()[0] || '?').toLocaleUpperCase(locale.value) : '–'
+}
+
 onMounted(() => {
   void loadUsers()
-  void loadUsage()
+  void loadStats()
 })
 </script>
 
@@ -414,65 +454,6 @@ h1 {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 16px;
-}
-
-.usage-section {
-  margin-top: 28px;
-}
-
-.section-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
-.section-header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 650;
-}
-
-.section-header p {
-  margin: 5px 0 0;
-  color: var(--text-tertiary);
-  font-size: 13px;
-}
-
-.usage-filters {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.usage-filters input,
-.usage-filters select {
-  height: 34px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-secondary);
-  padding: 0 9px;
-  font-size: 13px;
-}
-
-.usage-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.usage-summary span {
-  padding: 5px 10px;
-  background: #fff;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: 13px;
 }
 
 .toolbar-summary {
@@ -567,10 +548,6 @@ table {
   min-width: 760px;
 }
 
-.usage-table table {
-  min-width: 1040px;
-}
-
 th,
 td {
   padding: 13px 16px;
@@ -600,15 +577,6 @@ tr:last-child td {
 .username-cell small {
   color: var(--text-disabled);
   font-size: 11px;
-}
-
-.model-name {
-  display: inline-block;
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: middle;
 }
 
 .modal input,
@@ -703,6 +671,178 @@ tr:last-child td {
   margin-top: 18px;
 }
 
+.stats-section {
+  margin-top: 32px;
+}
+
+.stats-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.stats-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.stats-header p {
+  margin: 5px 0 0;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.period-switch {
+  display: inline-flex;
+  padding: 3px;
+  background: #fff;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.period-switch button {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.period-switch button.active {
+  background: var(--primary-soft);
+  color: var(--on-primary-soft);
+  font-weight: 600;
+}
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+.stat-card span {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.stat-card strong {
+  font-size: 22px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.stat-card small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.dim {
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.stats-table table {
+  min-width: 980px;
+}
+
+.stats-table td,
+.stats-table th {
+  white-space: nowrap;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sub {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.stat-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 650;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.avatar.admin {
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+tr.muted td {
+  color: var(--text-tertiary);
+}
+
+.share {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 150px;
+}
+
+.share-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: #eef0f3;
+  overflow: hidden;
+}
+
+.share-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-color);
+}
+
+.share-value {
+  min-width: 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .stat-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 720px) {
   .admin-header {
     padding: 0 14px;
@@ -715,15 +855,6 @@ tr:last-child td {
   .toolbar {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .section-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .usage-filters {
-    justify-content: flex-start;
   }
 
   .primary-btn {

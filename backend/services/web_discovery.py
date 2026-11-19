@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from urllib.parse import urlparse
 
@@ -47,8 +48,12 @@ def _parse_json(text: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-# Query writing blocks the result list, so it runs without reasoning.
-QUERY_LLM_TIMEOUT = 60.0
+# Extra queries are written in phase 2, after the first results are already on screen, so
+# this budget does not delay anything the user waits for. It runs without reasoning. A
+# slow provider (often 20-40 s under load) must still fit, or phase 2 never adds anything.
+QUERY_LLM_TIMEOUT = float(os.getenv("WEB_DISCOVERY_QUERY_TIMEOUT", "60"))
+# A single SearXNG query may hang on slow upstream engines; the other queries still count.
+SEARXNG_SEARCH_TIMEOUT = float(os.getenv("SEARXNG_SEARCH_TIMEOUT", "12"))
 # Ordering runs after the results are shown, so it can afford the model's reasoning.
 RANK_LLM_TIMEOUT = 240.0
 RANK_MAX_TOKENS = 8000  # reasoning and the answer share this budget
@@ -151,7 +156,13 @@ async def gather_candidates(base_url: str, queries: list[str], scope: str, langu
 
     async def run(q: str):
         try:
-            return await sx.search(base_url, q, categories=category, language=language)
+            return await sx.search(
+                base_url,
+                q,
+                categories=category,
+                language=language,
+                timeout=SEARXNG_SEARCH_TIMEOUT,
+            )
         except sx.SearxngError as exc:
             logger.info(f"SearXNG query failed ({q}): {exc.code}")
             if exc.code in ("unreachable", "json_disabled"):
@@ -246,6 +257,16 @@ async def rank_sources(
     return order
 
 
+def _default_access(result: dict) -> str:
+    if result.get("pdf_url"):
+        return "full"
+    if result.get("landing_url"):
+        return "oa_page"
+    if result.get("doi"):
+        return "abstract"
+    return "page"
+
+
 async def annotate_access(results: list[dict]) -> None:
     """Mark each result with how much of it can be imported:
     full (a PDF is available), oa_page (a free page, PDF unknown),
@@ -254,6 +275,9 @@ async def annotate_access(results: list[dict]) -> None:
         if not r.get("pdf_url"):
             r["pdf_url"] = oa.arxiv_pdf_url(r["url"]) or (r["url"] if r.get("kind") == "pdf" else "")
         r.setdefault("landing_url", "")
+        # Set a correct baseline immediately: if the enrichment lookup is slow or times
+        # out, the response still carries a usable access marker.
+        r.setdefault("access", _default_access(r))
     need = [r["doi"] for r in results if r.get("doi") and not r.get("pdf_url")]
     found: dict = {}
     if need:
@@ -284,18 +308,91 @@ async def annotate_access(results: list[dict]) -> None:
         r["authors"] = (r.get("authors") or [])[:10]
 
 
-async def discover_sources(
-    *, topic: str, scope: str, output_language: str, language: str | None, user_id: str
-) -> dict:
-    base_url = await config.resolve_searxng_url()
-    t0 = time.monotonic()
-    queries = await expand_queries(topic, scope, output_language, user_id)
-    t1 = time.monotonic()
-    candidates = await gather_candidates(base_url, queries, scope, language)
-    t2 = time.monotonic()
-    logger.info(f"web discovery: {len(queries)} queries in {t1 - t0:.1f}s, {len(candidates)} candidates in {t2 - t1:.1f}s")
+def _topic_query(topic: str) -> str:
+    return re.sub(r"\s+", " ", topic).strip()[:200]
+
+
+def _results_from_candidates(candidates: list[dict]) -> list[dict]:
     results = [dict(c, reason="") for c in candidates[:SHOWN_RESULTS]]
     for entry in results:
         entry.pop("_score", None)
-    await annotate_access(results)
+    return results
+
+
+async def _annotate_with_budget(results: list[dict], timeout: float) -> None:
+    try:
+        await asyncio.wait_for(annotate_access(results), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "open access annotation timed out after %.0fs; returning results without it",
+            timeout,
+        )
+
+
+async def discover_sources_quick(
+    *, topic: str, scope: str, language: str | None
+) -> dict:
+    """Phase 1: search the user's own wording only, so results appear without waiting for the model."""
+    base_url = await config.resolve_searxng_url()
+    topic_query = _topic_query(topic)
+    started = time.monotonic()
+    candidates = await gather_candidates(base_url, [topic_query], scope, language)
+    results = _results_from_candidates(candidates)
+    await _annotate_with_budget(results, timeout=4.0)
+    logger.info(
+        f"web discovery (quick): {len(results)} results in {time.monotonic() - started:.1f}s"
+    )
+    return {"queries": [topic_query], "results": results}
+
+
+async def discover_sources_expanded(
+    *,
+    topic: str,
+    scope: str,
+    output_language: str,
+    language: str | None,
+    user_id: str,
+    exclude_urls: list[str],
+) -> dict:
+    """Phase 2: the model writes extra queries and those are searched for additional sources."""
+    base_url = await config.resolve_searxng_url()
+    topic_query = _topic_query(topic)
+    started = time.monotonic()
+    try:
+        queries = await asyncio.wait_for(
+            expand_queries(topic, scope, output_language, user_id),
+            timeout=QUERY_LLM_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "web discovery query expansion timed out after %.0fs; no extra queries",
+            QUERY_LLM_TIMEOUT,
+        )
+        queries = []
+    except Exception as exc:
+        logger.warning(f"web discovery query expansion failed ({exc}); no extra queries")
+        queries = []
+
+    if topic_query.lower() not in {q.lower() for q in queries}:
+        queries.insert(0, topic_query)
+    queries = queries[: MAX_QUERIES + 1]
+
+    excluded = {sx._normalize_url(url) for url in exclude_urls if url}
+    extra_queries = [q for q in queries if q.lower() != topic_query.lower()]
+    candidates = (
+        await gather_candidates(base_url, extra_queries, scope, language)
+        if extra_queries
+        else []
+    )
+    candidates = [
+        candidate
+        for candidate in candidates
+        if sx._normalize_url(candidate.get("url", "")) not in excluded
+    ]
+    results = _results_from_candidates(candidates)
+    await _annotate_with_budget(results, timeout=8.0)
+    logger.info(
+        f"web discovery (expand): {len(extra_queries)} extra queries, "
+        f"{len(results)} new results in {time.monotonic() - started:.1f}s"
+    )
     return {"queries": queries, "results": results}

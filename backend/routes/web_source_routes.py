@@ -83,17 +83,52 @@ async def search_web_sources(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     import config
-    from services.web_discovery import discover_sources
+    from services.web_discovery import discover_sources_quick
 
     await require_project(db, project_id, current_user)
     scope = body.scope if body.scope in ("web", "academic") else "web"
     try:
-        data = await discover_sources(
+        data = await discover_sources_quick(
+            topic=body.query.strip(),
+            scope=scope,
+            language=None,
+        )
+    except sx.SearxngError as exc:
+        raise _searxng_http_error(exc, await config.resolve_searxng_url())
+    imported = await _imported_urls(db, project_id)
+    for item in data["results"]:
+        item["imported"] = sx._normalize_url(item["url"]) in imported
+    return {"scope": scope, **data}
+
+
+class WebSourceExpandRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+    scope: str = "web"
+    output_language: str | None = None
+    exclude_urls: list[str] = Field(default_factory=list, max_length=80)
+
+
+@router.post("/search/expand")
+async def expand_web_sources(
+    project_id: str,
+    body: WebSourceExpandRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Phase 2 of a search: the model writes extra queries, which are searched for more sources."""
+    import config
+    from services.web_discovery import discover_sources_expanded
+
+    await require_project(db, project_id, current_user)
+    scope = body.scope if body.scope in ("web", "academic") else "web"
+    try:
+        data = await discover_sources_expanded(
             topic=body.query.strip(),
             scope=scope,
             output_language=body.output_language or "Turkish",
             language=None,
             user_id=current_user.id,
+            exclude_urls=body.exclude_urls,
         )
     except sx.SearxngError as exc:
         raise _searxng_http_error(exc, await config.resolve_searxng_url())

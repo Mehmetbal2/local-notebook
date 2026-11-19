@@ -228,6 +228,8 @@ export function useProjectFeatures({
     if (featurePollingTimer) return
 
     featurePollingTimer = setInterval(async () => {
+      // No network traffic while the tab is in the background.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       if (pollingFeatureIds.value.size === 0) {
         stopFeaturePolling()
         return

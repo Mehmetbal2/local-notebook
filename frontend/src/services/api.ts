@@ -117,6 +117,36 @@ export async function getAdminUsers(): Promise<AdminUserListResponse> {
   return response.data
 }
 
+export interface AdminUserStatsRow {
+  user_id: string | null
+  username: string
+  role: AdminUserRole | 'unassigned'
+  projects: number
+  files: number
+  ready_files: number
+  storage_bytes: number
+  sessions: number
+  messages: number
+  outputs: number
+  llm_calls: number
+  tokens: number
+  last_active_at: string | null
+}
+
+export interface AdminUserStatsResponse {
+  period_days: number
+  rows: AdminUserStatsRow[]
+  totals: Omit<AdminUserStatsRow, 'user_id' | 'username' | 'role' | 'last_active_at'> & {
+    active_users: number
+  }
+}
+
+/** Per-user content (all time) and LLM usage for the last `days` days. */
+export async function getAdminUserStats(days = 30): Promise<AdminUserStatsResponse> {
+  const response = await api.get('/api/admin/users/stats', { params: { days } })
+  return response.data
+}
+
 export async function createAdminUser(data: {
   username: string
   password: string
@@ -162,6 +192,98 @@ export async function getAdminUsage(params?: {
   user_id?: string
 }): Promise<AdminUsageResponse> {
   const response = await api.get('/api/admin/usage', { params })
+  return response.data
+}
+
+export interface AdminDiagnosticsCollection {
+  exists: boolean
+  rows: number
+  dim: number | null
+}
+
+export interface AdminDiagnostics {
+  app: {
+    version: string
+    python: string
+    platform: string
+    uptime_seconds: number | null
+  }
+  database: {
+    path: string | null
+    size_bytes: number | null
+    counts: Record<string, number>
+  }
+  vectors: {
+    mode?: string
+    error?: string
+    file_size_bytes: number | null
+    collections: Record<string, AdminDiagnosticsCollection>
+  }
+  storage: {
+    data_dir: string
+    data_bytes: number
+    uploads_bytes: number
+    disk_free_bytes: number
+    disk_total_bytes: number
+  }
+  services: {
+    searxng: { url?: string; reachable: boolean; error?: string }
+    embedding: {
+      source: string
+      url?: string
+      model?: string
+      dim?: number | null
+      device?: string
+      local_running: boolean
+      local_port?: number | null
+      error?: string
+    }
+    llm: { configured: boolean; model: string; api_format: string }
+  }
+  logs: { recent: string[] }
+}
+
+export async function getAdminDiagnostics(): Promise<AdminDiagnostics> {
+  const response = await api.get('/api/admin/diagnostics')
+  return response.data
+}
+
+export interface PreparedBackup {
+  download_url: string
+  filename: string
+  size_bytes: number
+  expires_in: number
+}
+
+/**
+ * Build a backup zip (database + local vectors, optionally uploaded sources) on the server.
+ * The result is a one-time link: open it as a normal download so the browser streams the
+ * archive to disk instead of holding it in memory.
+ */
+export async function prepareAdminBackup(
+  includeUploads: boolean,
+  includeVectors = true,
+): Promise<PreparedBackup> {
+  const response = await api.post('/api/admin/backup/prepare', null, {
+    params: { include_uploads: includeUploads, include_vectors: includeVectors },
+    timeout: 600000,
+  })
+  const { download_path, ...rest } = response.data
+  return { ...rest, download_url: `${API_BASE}${download_path}` }
+}
+
+/** Stage a backup for restore; it is applied on the next application start. */
+export async function stageAdminRestore(
+  file: File,
+): Promise<{ ok: boolean; message: string; manifest?: Record<string, unknown> }> {
+  const form = new FormData()
+  form.append('file', file)
+  // Axios turns FormData into JSON when the instance default is application/json;
+  // the multipart header makes it pass the FormData through (as the upload calls do).
+  const response = await api.post('/api/admin/restore', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 600000,
+  })
   return response.data
 }
 
@@ -395,7 +517,7 @@ export interface WebSourceImportResponse {
   abstract_only?: string[]
 }
 
-/** Find sources on the web for a topic (SearXNG + model ranking). Nothing is imported. */
+/** Phase 1: search the user's own wording only. Results appear without waiting for the model. */
 export async function searchWebSources(
   projectId: string,
   query: string,
@@ -405,7 +527,28 @@ export async function searchWebSources(
   const response = await api.post(
     `/api/projects/${projectId}/web-sources/search`,
     { query, scope, output_language: outputLanguage },
-    { timeout: 180000 }
+    { timeout: 60000 }
+  )
+  return response.data
+}
+
+/** Phase 2: let the model write extra queries and search them for additional sources. */
+export async function expandWebSources(
+  projectId: string,
+  query: string,
+  scope: 'web' | 'academic',
+  excludeUrls: string[],
+  outputLanguage?: string
+): Promise<WebSourceSearchResponse> {
+  const response = await api.post(
+    `/api/projects/${projectId}/web-sources/search/expand`,
+    {
+      query,
+      scope,
+      output_language: outputLanguage,
+      exclude_urls: excludeUrls,
+    },
+    { timeout: 120000 }
   )
   return response.data
 }
@@ -570,7 +713,9 @@ export interface CreateSessionResponse extends Session {
   reused: boolean
 }
 
-export async function createSession(projectId: string, title: string = t('ui.newChat')): Promise<CreateSessionResponse> {
+// New chats are stored with the language-neutral placeholder; the UI shows it translated and
+// replaces it with a generated title after the first question.
+export async function createSession(projectId: string, title: string = 'New chat'): Promise<CreateSessionResponse> {
   const response = await api.post(`/api/projects/${projectId}/sessions`, { title })
   return response.data
 }
@@ -680,7 +825,6 @@ export interface ChatStreamCallbacks {
   onToolExecuting?: (tools: ToolExecuting[]) => void
   onWorkflowStarted?: (data: WorkflowStartedData) => void
   onFeatureStarted?: (data: FeatureStartedData) => void
-  onCitations?: (citations: any[]) => void
   onReasoning?: (content: string) => void
   onReasoningCitationRef?: (citation: CitationRef) => void
   onCompacting?: () => void
@@ -853,9 +997,6 @@ export function chatStream(
                     })
                   }
                   break
-                case 'citations':
-                  callbacks.onCitations?.(data.data || data.citations || [])
-                  break
                 case 'compacting':
                   callbacks.onCompacting?.()
                   break
@@ -908,16 +1049,6 @@ export function editMessageAndRegenerate(
 ): () => void {
   const controller = new AbortController()
   const token = getToken()
-
-  console.log(`📡 [editMessageAndRegenerate] API call parameters:`, {
-    sessionId,
-    messageId,
-    contentLength: content?.length,
-    fileIds,
-    enableWebSearch,
-    agentRole,
-    url: `${API_BASE}/api/chat/${sessionId}/messages/${messageId}/edit`
-  })
 
   fetch(`${API_BASE}/api/chat/${sessionId}/messages/${messageId}/edit`, {
     method: 'POST',
@@ -1077,9 +1208,6 @@ export function editMessageAndRegenerate(
                       summary: data.summary
                     })
                   }
-                  break
-                case 'citations':
-                  callbacks.onCitations?.(data.data || data.citations || [])
                   break
                 case 'done':
                   callbacks.onDone({

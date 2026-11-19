@@ -1,5 +1,5 @@
 """
-local-Notebook FunASR Service
+Local Notebook FunASR Service
 ==============================
 Wraps the funasr Python package and exposes a clean HTTP API.
 Supports speaker diarization and long-form audio.
@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="local-Notebook FunASR Service",
+    title="Local Notebook FunASR Service",
     description="Audio transcription with speaker diarization using FunASR",
     version="0.1.0",
     lifespan=lifespan,

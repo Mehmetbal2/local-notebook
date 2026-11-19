@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import delete as sa_delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -194,10 +194,28 @@ async def update_project(
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(
     project_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
     project = await require_project(db, project_id, current_user)
+
+    # Stop parses before deleting rows: a running task would otherwise commit an update
+    # for a file row that no longer exists ("expected to update 1 row(s); 0 were matched").
+    from routes.file_routes import _local_queue, _stop_file_processing
+
+    project_files = (
+        (await db.execute(select(File).where(File.project_id == project_id)))
+        .scalars()
+        .all()
+    )
+    for db_file in project_files:
+        await _stop_file_processing(request, db, db_file)
+    queue = _local_queue(request)
+    if queue is not None:
+        await asyncio.gather(
+            *(queue.wait_job(f.job_id, timeout=8.0) for f in project_files if f.job_id)
+        )
 
     await _drop_project_vectors(project_id)
     await _delete_project_rows(db, project_id, project)

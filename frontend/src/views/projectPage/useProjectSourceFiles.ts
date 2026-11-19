@@ -245,6 +245,8 @@ export function useProjectSourceFiles({
     if (filePollingTimer) return
 
     filePollingTimer = setInterval(async () => {
+      // No network traffic while the tab is in the background.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       if (pollingFileIds.value.size === 0) {
         stopFilePolling()
         return

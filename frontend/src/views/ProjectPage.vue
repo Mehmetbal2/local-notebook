@@ -251,7 +251,7 @@
 
 
       <footer class="project-footer">
-        {{ $t('ui.xiaoluoMayMakeMistakesSoPleaseVerifyImportant') }}
+        {{ $t('ui.aiMayMakeMistakesVerifyImportant') }}
       </footer>
     </div>
 
@@ -422,6 +422,7 @@
 </template>
 
 <script setup lang="ts">
+import { displaySessionTitle as displaySessionTitleText, isPlaceholderSessionTitle } from '../utils/sessionTitle'
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import 'katex/dist/katex.min.css'
@@ -631,11 +632,6 @@ const titleInputWidth = ref('120px')
 const isEditingSessionTitle = ref(false)
 const editingSessionTitleValue = ref('')
 const generatingSessionTitleId = ref<string | null>(null)
-const PLACEHOLDER_SESSION_TITLES = new Set(['', '新对话', 'New chat'])
-
-function isPlaceholderSessionTitle(title?: string | null): boolean {
-  return PLACEHOLDER_SESSION_TITLES.has((title || '').trim())
-}
 
 const isCurrentSessionTitleGenerating = computed(() => {
   if (!currentSession.value) return false
@@ -645,7 +641,7 @@ const isCurrentSessionTitleGenerating = computed(() => {
 
 const displaySessionTitle = computed(() => {
   if (isCurrentSessionTitleGenerating.value) return t('ui.generatingTitle2')
-  return currentSession.value?.title || t('ui.newChat')
+  return displaySessionTitleText(currentSession.value?.title)
 })
 
 function shouldGenerateTitleForCurrentTurn(): boolean {
@@ -715,7 +711,7 @@ const showSessionHistory = ref(false)
 
 
 const GREETING_KEYS = [
-  'ui.xiaoluoIsHereGoAhead',
+  'ui.askAboutYourSources',
   'ui.whatWouldYouLikeToTalkAboutToday',
   'ui.hiYouAreHere',
 ] as const
@@ -1646,27 +1642,19 @@ function isPreCompactMessage(index: number): boolean {
 
 
 async function syncAllPendingMessageIds() {
-  console.log('🔄 [syncAllPendingMessageIds] starting sync...')
-
   if (!currentSession.value) {
-    console.log('⚠️ [syncAllPendingMessageIds] no current session, skipping')
     return
   }
 
 
   const pendingUsers = messages.value.filter(m => m.role === 'user' && (isTempMessageId(m.id) || m.pending_id_sync))
-  console.log(`🔍 [syncAllPendingMessageIds] user messages to sync:`, pendingUsers.map(m => ({ id: m.id, pending: m.pending_id_sync })))
 
   if (pendingUsers.length === 0) {
-    console.log('✅ [syncAllPendingMessageIds] nothing to sync, skipping')
     return
   }
 
   try {
-    console.log('📡 [syncAllPendingMessageIds] calling the brief endpoint...')
-
     const session = await getSession(currentSession.value.id, 20, 0, true)
-    console.log('📥 [syncAllPendingMessageIds] brief endpoint returned:', session.messages?.length, 'messages')
     const remoteMessages = session.messages || []
 
 
@@ -1679,7 +1667,6 @@ async function syncAllPendingMessageIds() {
       if (positionIndex >= 0 && positionIndex < remoteUsers.length) {
         const remote = remoteUsers[positionIndex]
         if (remote) {
-          console.log(`✅ [sync] synced user ID (position ${positionIndex + 1}): ${local.id} -> ${remote.id}`)
           local.id = remote.id
           local.pending_id_sync = false
         }
@@ -1706,10 +1693,7 @@ async function syncEditMessageIds() {
 }
 
 function stopStreaming() {
-  console.log('⏹️ [stopStreaming] stopping generation...')
-
   if (!isStreaming.value) {
-    console.log('⚠️ [stopStreaming] no streaming in progress, skipping')
     return
   }
 
@@ -1726,27 +1710,31 @@ function stopStreaming() {
   isThinking.value = false
   clearStreamingTurn()
 
-  if (streamingParts.value.length > 0 && currentSession.value) {
+  if (currentSession.value) {
+    const hasStreamedParts = streamingParts.value.length > 0
     const tempId = Date.now().toString()
     messages.value.push({
       id: tempId,
       session_id: currentSession.value.id,
       role: 'assistant',
-      content_parts: [...streamingParts.value],
+      // Cancelled before any output arrived: leave a visible marker instead of an
+      // unanswered user message. This marker is local-only, so it needs no id sync.
+      content_parts: hasStreamedParts
+        ? [...streamingParts.value]
+        : [{ type: 'text', content: t('ui.generationStopped') }],
       created_at: new Date().toISOString(),
       agent_role: messageRoleForTurn(),
-      pending_id_sync: true
+      pending_id_sync: hasStreamedParts
     })
-    pendingStopTempId.value = tempId
-    pendingStopSessionId.value = currentSession.value.id
-    console.log('📝 [stopStreaming] created a temporary assistant message:', tempId)
+    if (hasStreamedParts) {
+      pendingStopTempId.value = tempId
+      pendingStopSessionId.value = currentSession.value.id
+    }
   }
 
   streamingParts.value = []
   isStreaming.value = false
 
-
-  console.log('🔄 [stopStreaming] calling syncPendingStopMessageIds...')
   syncPendingStopMessageIds()
 }
 
@@ -1897,9 +1885,6 @@ async function sendMessage() {
       },
       onWorkflowStarted: handleWorkflowStarted,
       onFeatureStarted: handleFeatureStarted,
-      onCitations: () => {
-
-      },
       onCompacting: () => {
         streamingParts.value.push({
           type: 'tool_status',
@@ -1989,7 +1974,6 @@ async function sendMessage() {
             if (msg.id && /^\d+$/.test(msg.id)) {
               msg.id = userMessageId
               msg.pending_id_sync = false
-              console.log(`✅ [sendMessage] updated user message ID: ${userMessageId}`)
               break
             }
           }
@@ -2003,7 +1987,6 @@ async function sendMessage() {
             if (msg.id && /^\d+$/.test(msg.id)) {
               msg.id = assistantMessageId
               msg.pending_id_sync = false
-              console.log(`✅ [sendMessage] updated assistant message ID: ${assistantMessageId}`)
               break
             }
           }
@@ -2359,7 +2342,6 @@ async function submitEditMessage(msg: Message) {
         if (targetMessage) {
           targetMessage.id = userMessageId
           targetMessage.pending_id_sync = false
-          console.log(`✅ [submitEditMessage] updated edited user message ID: ${targetMessage.id} -> ${userMessageId}`)
         }
 
         for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -2368,7 +2350,6 @@ async function submitEditMessage(msg: Message) {
             if (msg.id && /^\d+$/.test(msg.id)) {
               msg.id = assistantMessageId
               msg.pending_id_sync = false
-              console.log(`✅ [submitEditMessage] updated assistant message ID: ${assistantMessageId}`)
               break
             }
           }
@@ -2465,7 +2446,6 @@ async function regenerateMessage(assistantIndex: number) {
 
   startStreamingTurn()
 
-  console.log(`📤 [regenerateMessage] calling the API, user ID: ${userMessage.id}, temporary ID: ${isTempMessageId(userMessage.id)}`)
   currentStreamAbort = editMessageAndRegenerate(
     currentSession.value.id,
     userMessage.id,
@@ -2580,7 +2560,6 @@ async function regenerateMessage(assistantIndex: number) {
         if (userMessage) {
           userMessage.id = userMessageId
           userMessage.pending_id_sync = false
-          console.log(`✅ [regenerateMessage] updated user message ID: ${userMessageId}`)
         }
 
         for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -2589,7 +2568,6 @@ async function regenerateMessage(assistantIndex: number) {
             if (msg.id && /^\d+$/.test(msg.id)) {
               msg.id = assistantMessageId
               msg.pending_id_sync = false
-              console.log(`✅ [regenerateMessage] updated assistant message ID: ${assistantMessageId}`)
               break
             }
           }
@@ -2752,7 +2730,7 @@ async function handleSwitchSession(sessionId: string) {
 }
 
 async function handleDeleteSession(sessionId: string, title: string) {
-  const displayTitle = title || t('ui.newChat')
+  const displayTitle = displaySessionTitleText(title)
   const confirmed = await showConfirm({
     title: t('ui.deleteChat'),
     message: t('ui.deleteChatMessage', { title: displayTitle }),

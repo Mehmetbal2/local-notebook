@@ -365,11 +365,9 @@ class ChatAgent:
             })
 
             citation_summary = citation_parser.get_citation_summary()
-            citations_result = self._extract_citations(full_content)
 
             yield {
                 "type": "citations",
-                "data": citations_result,
                 "citation_summary": citation_summary,
                 "citation_counter": self.session_citation_counter,
                 "next_citation_display_num": self.session_next_display_num,
@@ -684,24 +682,6 @@ class ChatAgent:
                 if entry.get("display_num") is None:
                     entry["display_num"] = display_num
         self._next_display_num = parser.display_num
-
-    def _extract_citations(self, answer: str) -> dict:
-        citation_ids: set[str] = set()
-        range_parser = CitationParser({})
-        for match in CitationParser.CITATION_PATTERN.finditer(answer):
-            start_token = match.group(1)
-            end_token = match.group(2)
-            if end_token:
-                citation_ids.update(range_parser._expand_range(start_token, end_token))
-            else:
-                citation_ids.add(f"citation_{start_token}")
-
-        citations = []
-        for cid in sorted(citation_ids):
-            if cid in self._citation_state.citations_map:
-                citations.append({"id": cid, **self._citation_state.citations_map[cid]})
-
-        return {"answer": answer, "citations": citations}
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:

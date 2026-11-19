@@ -61,7 +61,9 @@ export function checkFileSize(file: File): { valid: boolean; error?: string } {
 }
 
 // "Author - Year - Title", the year may be a range (1408/1988) or a no-date mark (t.y. / n.d.).
-const BIBLIOGRAPHIC_NAME = /^\s*[^-–]+?\s+[-–]\s+(?:\d{3,4}(?:\s*\/\s*\d{3,4})?|t\.\s?y\.|n\.\s?d\.|无日期)\s+[-–]\s+\S.*$/i
+// The author part may contain hyphens (Ebü'l-Hasan, Jean-Paul); only a spaced dash
+// separates the fields, so a hyphen inside a name is not treated as a separator.
+const BIBLIOGRAPHIC_NAME = /^\s*.+?\s+[-–]\s+(?:\d{3,4}(?:\s*\/\s*\d{3,4})?|t\.\s?y\.|n\.\s?d\.|无日期)\s+[-–]\s+\S.*$/i
 
 /** Whether a source's file name already reads "Author - Year - Title" (extension ignored). */
 export function isBibliographicName(fileName: string): boolean {

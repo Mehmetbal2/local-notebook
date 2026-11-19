@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import AsyncGenerator, Optional
@@ -18,6 +19,64 @@ from utils.i18n import msg as ui_msg
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger("chat_routes")
+
+# Strong references for fire-and-forget persistence after a cancelled stream.
+_background_tasks: set = set()
+
+_STOPPED_LABELS = {
+    "Chinese": "已停止生成",
+    "Turkish": "Oluşturma durduruldu",
+    "English": "Generation stopped",
+}
+
+
+def _stop_label(output_language: Optional[str]) -> str:
+    from services.summary_service import normalize_output_language
+
+    return _STOPPED_LABELS.get(
+        normalize_output_language(output_language), _STOPPED_LABELS["English"]
+    )
+
+
+async def _persist_cancelled_answer(
+    session_id: str,
+    partial_text: str,
+    started_at,
+    output_language: Optional[str],
+    general_chat: bool,
+) -> None:
+    """Keep the text the user already saw when they stopped the answer.
+
+    Opens its own session because the request-scoped session may be closing while the
+    cancelled response task is being torn down.
+    """
+    from datetime import datetime, timezone
+
+    from database import AsyncSessionLocal
+
+    label = _stop_label(output_language)
+    body = (partial_text or "").strip()
+    content = f"{body}\n\n_{label}_" if body else f"_{label}_"
+    try:
+        async with AsyncSessionLocal() as session_db:
+            session_db.add(
+                Message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=content,
+                    started_at=started_at,
+                    finished_at=datetime.now(timezone.utc),
+                    agent_role="general" if general_chat else None,
+                )
+            )
+            live_session = await session_db.get(Session, session_id)
+            if live_session is not None:
+                # The user message and this marker were not counted by the normal path.
+                live_session.message_count = (live_session.message_count or 0) + 2
+                live_session.updated_at = datetime.now(timezone.utc)
+            await session_db.commit()
+    except Exception:
+        logger.exception("Failed to persist cancelled assistant message")
 
 
 async def _agent_sse(
@@ -43,6 +102,8 @@ async def _agent_sse(
     next_citation_display_num = 1
     last_total_tokens = None
     started_at = datetime.now(timezone.utc)
+    partial_text: list[str] = []
+    completed = False
 
     try:
         async for event in agent.ask_stream(
@@ -56,7 +117,9 @@ async def _agent_sse(
             output_language=output_language,
             general_chat=general_chat,
         ):
-            if event["type"] == "citations":
+            if event["type"] == "text":
+                partial_text.append(event.get("content") or "")
+            elif event["type"] == "citations":
                 conversation_history = event.get("conversation_history") or []
                 citation_counter = event.get("citation_counter", 0)
                 next_citation_display_num = event.get("next_citation_display_num", 1)
@@ -64,7 +127,10 @@ async def _agent_sse(
 
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
+        completed = True
+
     except Exception as e:
+        completed = True
         logger.exception("ChatAgent stream error")
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -82,6 +148,22 @@ async def _agent_sse(
         except Exception:
             logger.exception("Failed to persist error message")
         return
+    finally:
+        if not completed:
+            try:
+                task = asyncio.create_task(
+                    _persist_cancelled_answer(
+                        session.id,
+                        "".join(partial_text),
+                        started_at,
+                        output_language,
+                        general_chat,
+                    )
+                )
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
+            except Exception:
+                logger.exception("Could not schedule cancelled-answer persistence")
 
     finished_at = datetime.now(timezone.utc)
 

@@ -120,6 +120,23 @@ SNIPPET_MAX_CHARS = int(os.getenv("SEGMENT_SUMMARY_SNIPPET_CHARS", "240"))
 SEGMENT_SUMMARY_CONCURRENCY = int(os.getenv("SEGMENT_SUMMARY_CONCURRENCY", "2"))
 SEGMENT_SUMMARY_MAX_ATTEMPTS = int(os.getenv("SEGMENT_SUMMARY_MAX_ATTEMPTS", "5"))
 
+# Per-file semaphores multiply when several files are processed in parallel (4 files x 2),
+# which exceeds the provider's account-wide limit (seen: 2 concurrent requests) and burns
+# time on 429 retries. This process-wide cap applies to every background LLM call.
+LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
+_llm_semaphore = None
+_llm_semaphore_loop = None
+
+
+def _global_llm_semaphore():
+    """Return one semaphore shared by all summary calls, scoped to the running loop."""
+    global _llm_semaphore, _llm_semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _llm_semaphore is None or _llm_semaphore_loop is not loop:
+        _llm_semaphore = asyncio.Semaphore(LLM_MAX_CONCURRENCY)
+        _llm_semaphore_loop = loop
+    return _llm_semaphore
+
 SUMMARY_SENTENCE_ENDINGS = "。！？!?؛;؟۔.…"
 
 
@@ -236,21 +253,22 @@ async def _llm_complete(
     temperature: float = 0.2,
     user_id: str | None = None,
 ) -> str:
-    chat_provider = create_llm_chat_provider(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        api_format=api_format,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        stream=False,
-    )
-    result = await generate(
-        chat_provider=chat_provider,
-        system_prompt="",
-        tools=[],
-        history=[Message(role="user", content=prompt)],
-    )
+    async with _global_llm_semaphore():
+        chat_provider = create_llm_chat_provider(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            api_format=api_format,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=False,
+        )
+        result = await generate(
+            chat_provider=chat_provider,
+            system_prompt="",
+            tools=[],
+            history=[Message(role="user", content=prompt)],
+        )
     await record_model_usage(user_id=user_id, model=model, usage=result.usage)
     return result.message.extract_text().strip()
 

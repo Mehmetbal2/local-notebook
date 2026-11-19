@@ -13,12 +13,21 @@ logger = logging.getLogger("service.usage")
 
 
 def current_usage_date() -> date:
-    timezone_name = os.getenv("USAGE_TIMEZONE", "Asia/Shanghai")
+    """Today's date for usage accounting.
+
+    USAGE_TIMEZONE picks a zone explicitly. Without it the machine's own time zone is used:
+    the old fixed default (Asia/Shanghai) dated evening usage elsewhere as the next day.
+    """
+    timezone_name = (os.getenv("USAGE_TIMEZONE") or "").strip()
+    now = datetime.now(timezone.utc)
+    if not timezone_name:
+        return now.astimezone().date()
     try:
         usage_timezone = ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
-        usage_timezone = timezone.utc
-    return datetime.now(timezone.utc).astimezone(usage_timezone).date()
+        logger.warning("Unknown USAGE_TIMEZONE %r; using the system time zone", timezone_name)
+        return now.astimezone().date()
+    return now.astimezone(usage_timezone).date()
 
 
 def _token_value(value: int | None) -> int:

@@ -54,6 +54,7 @@ RUNTIME_SCHEMA_COLUMNS = [
     ("files", "processing_total", "INTEGER"),
     ("files", "processing_message", "VARCHAR(200)"),
     ("files", "source_url", "TEXT"),
+    ("files", "output_language", "VARCHAR(40)"),
 ]
 
 

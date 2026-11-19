@@ -1,5 +1,7 @@
 import logging
 import os
+import threading
+import time
 from collections.abc import Iterable
 from pathlib import Path
 from paths import get_data_dir, get_milvus_uri
@@ -21,6 +23,15 @@ PQ_M = 128
 PQ_NBITS = 8
 
 _client = None
+# Milvus Lite takes an exclusive flock on the database file, so two threads that
+# both see `_client is None` must not open it at the same time: the loser gets
+# "Open local milvus failed" and the job drops into the retry queue. Serialize
+# initialization (double-checked locking) so only one thread ever creates it.
+_client_lock = threading.Lock()
+# Creating a collection is not atomic: after the shared collections are dropped (model switch
+# or re-index), several re-embed jobs reach ensure_collection at the same moment and would
+# each try to create or drop it. One thread at a time decides.
+_collection_lock = threading.Lock()
 
 
 def _create_milvus_client(uri: str):
@@ -39,12 +50,45 @@ def _create_milvus_client(uri: str):
             os.environ["MILVUS_URI"] = saved_env
 
 
+def _is_milvus_lock_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "holds the lock" in message
+        or "open local milvus failed" in message
+        or "resource temporarily unavailable" in message
+    )
+
+
+def _create_client_with_retry(uri: str):
+    """Wait briefly when the previous backend process has not released the data dir yet."""
+    attempts = max(1, int(os.getenv("MILVUS_STARTUP_RETRIES", "8")))
+    for attempt in range(attempts):
+        try:
+            return _create_milvus_client(uri)
+        except Exception as exc:
+            if attempt == attempts - 1 or not _is_milvus_lock_error(exc):
+                raise
+            delay = min(2.0, 0.25 * (2 ** attempt))
+            logger.warning(
+                "Milvus data directory is still locked by the previous process; "
+                "retrying in %.2fs (%d/%d)",
+                delay,
+                attempt + 1,
+                attempts,
+            )
+            time.sleep(delay)
+
+
 def _get_client():
     global _client, MILVUS_URI
-    if _client is None:
+    if _client is not None:
+        return _client
+    with _client_lock:
+        if _client is not None:
+            return _client
         MILVUS_URI = get_milvus_uri()
         try:
-            _client = _create_milvus_client(MILVUS_URI)
+            _client = _create_client_with_retry(MILVUS_URI)
         except Exception as exc:
             fallback_uri = (get_data_dir() / "milvus.db").resolve().as_posix()
             if MILVUS_URI.startswith(("http://", "https://")) and MILVUS_URI != fallback_uri:
@@ -56,7 +100,7 @@ def _get_client():
                 )
                 os.environ["MILVUS_URI"] = fallback_uri
                 MILVUS_URI = fallback_uri
-                _client = _create_milvus_client(fallback_uri)
+                _client = _create_client_with_retry(fallback_uri)
             else:
                 raise
     return _client
@@ -175,6 +219,33 @@ def _ensure_collection_loaded(client, name: str) -> bool:
     return True
 
 
+# Collections already loaded by the current client, with their vector dim. search() runs on
+# every chat question; without this it paid a load + describe round trip each time. Entries
+# are dropped whenever this process creates or drops a collection.
+_search_ready: dict[tuple[int, str], int | None] = {}
+_search_ready_lock = threading.Lock()
+
+
+def _forget_collection(name: str) -> None:
+    with _search_ready_lock:
+        for key in [key for key in _search_ready if key[1] == name]:
+            _search_ready.pop(key, None)
+
+
+def _search_dim(client, name: str) -> tuple[bool, int | None]:
+    """(exists, dim) for a collection about to be searched, using the cache when possible."""
+    key = (id(client), name)
+    with _search_ready_lock:
+        if key in _search_ready:
+            return True, _search_ready[key]
+    if not _ensure_collection_loaded(client, name):
+        return False, None
+    dim = _get_collection_dim(client, name)
+    with _search_ready_lock:
+        _search_ready[key] = dim
+    return True, dim
+
+
 def _get_collection_dim(client, name: str) -> int | None:
     if not client.has_collection(name):
         return None
@@ -204,6 +275,7 @@ def reset_shared_collections() -> None:
     for name in shared_collection_names():
         if client.has_collection(name):
             client.drop_collection(collection_name=name)
+            _forget_collection(name)
             logger.info("Dropped shared Milvus collection '%s' after embedding model switch", name)
 
 
@@ -222,12 +294,18 @@ def _check_or_recreate_collection_dim(client, name: str, dim: int) -> bool:
             dim,
         )
         client.drop_collection(collection_name=name)
+        _forget_collection(name)
         return False
     from utils.i18n import msg as ui_msg
     raise RuntimeError(ui_msg("embedding_dim_mismatch", existing_dim=existing_dim, new_dim=dim))
 
 
 def ensure_collection(project_id: str, dim: int) -> None:
+    with _collection_lock:
+        _ensure_collection_locked(project_id, dim)
+
+
+def _ensure_collection_locked(project_id: str, dim: int) -> None:
     client = _get_client()
     name = TEXT_COLLECTION
     if _check_or_recreate_collection_dim(client, name, dim):
@@ -253,6 +331,7 @@ def ensure_collection(project_id: str, dim: int) -> None:
         schema=schema,
         index_params=index_params,
     )
+    _forget_collection(name)
     logger.info(
         "Created Milvus text collection '%s' dim=%s index=%s",
         name,
@@ -262,6 +341,11 @@ def ensure_collection(project_id: str, dim: int) -> None:
 
 
 def ensure_image_collection(project_id: str, dim: int) -> None:
+    with _collection_lock:
+        _ensure_image_collection_locked(project_id, dim)
+
+
+def _ensure_image_collection_locked(project_id: str, dim: int) -> None:
     client = _get_client()
     name = IMAGE_COLLECTION
     if _check_or_recreate_collection_dim(client, name, dim):
@@ -286,6 +370,7 @@ def ensure_image_collection(project_id: str, dim: int) -> None:
         schema=schema,
         index_params=index_params,
     )
+    _forget_collection(name)
     logger.info(
         "Created Milvus image collection '%s' dim=%s index=%s",
         name,
@@ -380,22 +465,28 @@ def search(
     client = _get_client()
     name = TEXT_COLLECTION
 
-    if not _ensure_collection_loaded(client, name):
+    exists, existing_dim = _search_dim(client, name)
+    if not exists:
         return []
-
-    existing_dim = _get_collection_dim(client, name)
     if existing_dim is not None and existing_dim != len(query_vector):
         from utils.i18n import msg as ui_msg
         raise RuntimeError(ui_msg("embedding_dim_mismatch", existing_dim=existing_dim, new_dim=len(query_vector)))
 
-    results = client.search(
-        collection_name=name,
-        data=[query_vector],
-        limit=top_k,
-        filter=_filter_for_project_files(project_id, file_ids),
-        output_fields=["file_id", "file_name", "segment_index", "content", "summary"],
-        search_params={"metric_type": "L2", "params": {"nprobe": IVF_NPROBE}},
-    )
+    try:
+        results = client.search(
+            collection_name=name,
+            data=[query_vector],
+            limit=top_k,
+            filter=_filter_for_project_files(project_id, file_ids),
+            output_fields=["file_id", "file_name", "segment_index", "content", "summary"],
+            search_params={"metric_type": "L2", "params": {"nprobe": IVF_NPROBE}},
+        )
+    except Exception:
+        # The cached state may be stale (collection dropped or released elsewhere).
+        _forget_collection(name)
+        if not client.has_collection(name):
+            return []
+        raise
 
     hits = []
     for hit in results[0]:
@@ -420,22 +511,28 @@ def search_images(
     client = _get_client()
     name = IMAGE_COLLECTION
 
-    if not _ensure_collection_loaded(client, name):
+    exists, existing_dim = _search_dim(client, name)
+    if not exists:
         return []
-
-    existing_dim = _get_collection_dim(client, name)
     if existing_dim is not None and existing_dim != len(query_vector):
         from utils.i18n import msg as ui_msg
         raise RuntimeError(ui_msg("embedding_dim_mismatch", existing_dim=existing_dim, new_dim=len(query_vector)))
 
-    results = client.search(
-        collection_name=name,
-        data=[query_vector],
-        limit=top_k,
-        filter=_filter_for_project_files(project_id, file_ids),
-        output_fields=["file_id", "file_name", "image_index", "description"],
-        search_params={"metric_type": "L2", "params": {"nprobe": IVF_NPROBE}},
-    )
+    try:
+        results = client.search(
+            collection_name=name,
+            data=[query_vector],
+            limit=top_k,
+            filter=_filter_for_project_files(project_id, file_ids),
+            output_fields=["file_id", "file_name", "image_index", "description"],
+            search_params={"metric_type": "L2", "params": {"nprobe": IVF_NPROBE}},
+        )
+    except Exception:
+        # The cached state may be stale (collection dropped or released elsewhere).
+        _forget_collection(name)
+        if not client.has_collection(name):
+            return []
+        raise
 
     hits = []
     for hit in results[0]:

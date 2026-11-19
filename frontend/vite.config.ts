@@ -25,9 +25,19 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // 将 .mjs 改为 .js，避免服务器 MIME 类型问题
+        // Emit .js instead of .mjs so servers without an .mjs MIME mapping still serve them
         entryFileNames: 'assets/[name]-[hash].js',
         chunkFileNames: 'assets/[name]-[hash].js',
+        // Large libraries get their own long-lived chunks: the project page no longer ships
+        // as a single 1.1 MB file, and a release that only changes app code leaves these cached.
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('pdfjs-dist')) return 'vendor-pdfjs'
+          if (id.includes('katex')) return 'vendor-katex'
+          if (id.includes('marked') || id.includes('diff-match-patch')) return 'vendor-text'
+          if (/node_modules\/(@vue|vue|vue-router|vue-i18n|@intlify)\//.test(id)) return 'vendor-vue'
+          return 'vendor'
+        },
       }
     }
   }

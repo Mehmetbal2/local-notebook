@@ -867,6 +867,14 @@ class ExportService:
                     return True
             except Exception:
                 continue
+        # Silent degradation made a broken/foreign-architecture pandoc binary look like a
+        # formatting choice. Say so in the log: the built-in writer emits endnotes, not
+        # real Word footnotes.
+        logger.warning(
+            "Pandoc is not usable (%s); DOCX export falls back to the built-in writer, "
+            "which produces endnotes instead of real Word footnotes.",
+            ", ".join(candidates) or "not found",
+        )
         return False
 
     def _convert_markdown_to_docx(self, markdown_content: str) -> BytesIO:
@@ -903,6 +911,15 @@ class ExportService:
             return self._build_docx_from_markdown(markdown_content)
 
     def _convert_markdown_to_docx_with_pandoc(self, markdown_content: str) -> BytesIO:
+        import shutil
+
+        # pypandoc probes its bundled binary even when a usable system pandoc exists. On
+        # Apple Silicon the pypandoc-binary wheels (still as of 1.17) ship an x86_64 pandoc
+        # that cannot be exec'd and logs a traceback. Point pypandoc at the working system
+        # binary first so the unusable one is never tried.
+        system_pandoc = shutil.which("pandoc")
+        if system_pandoc:
+            os.environ.setdefault("PYPANDOC_PANDOC", system_pandoc)
         import pypandoc
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as md_file:

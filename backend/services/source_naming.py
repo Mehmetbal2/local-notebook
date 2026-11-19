@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 OPENING_TEXT_CHARS = 6000
 # "Author - Year - Title", year may be a range (1408/1988) or "t.y." / "n.d." (no date).
 BIBLIOGRAPHIC_NAME_RE = re.compile(
-    r"^\s*[^-–]+?\s+[-–]\s+(?:\d{3,4}(?:\s*/\s*\d{3,4})?|t\.\s?y\.|n\.\s?d\.)\s+[-–]\s+\S.*$",
+    # The author part must allow hyphens (Ebü'l-Hasan, Jean-Paul); only a spaced dash
+    # separates the fields, so a hyphen inside a name is not mistaken for a separator.
+    r"^\s*.+?\s+[-–]\s+(?:\d{3,4}(?:\s*/\s*\d{3,4})?|t\.\s?y\.|n\.\s?d\.)\s+[-–]\s+\S.*$",
     re.IGNORECASE,
 )
 

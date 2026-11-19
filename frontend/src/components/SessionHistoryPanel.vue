@@ -31,7 +31,7 @@
                 :class="{ active: session.id === currentSessionId }"
                 @click="$emit('select', session.id)"
               >
-                <span class="session-title">{{ session.title || $t('ui.newChat') }}</span>
+                <span class="session-title">{{ displaySessionTitle(session.title) }}</span>
                 <span class="session-time">{{ formatRelativeTime(session.updated_at) }}</span>
                 <button
                   class="delete-btn"
@@ -54,7 +54,7 @@
                 :class="{ active: session.id === currentSessionId }"
                 @click="$emit('select', session.id)"
               >
-                <span class="session-title">{{ session.title || $t('ui.newChat') }}</span>
+                <span class="session-title">{{ displaySessionTitle(session.title) }}</span>
                 <span class="session-time">{{ formatRelativeTime(session.updated_at) }}</span>
                 <button
                   class="delete-btn"
@@ -77,7 +77,7 @@
                 :class="{ active: session.id === currentSessionId }"
                 @click="$emit('select', session.id)"
               >
-                <span class="session-title">{{ session.title || $t('ui.newChat') }}</span>
+                <span class="session-title">{{ displaySessionTitle(session.title) }}</span>
                 <span class="session-time">{{ formatRelativeTime(session.updated_at) }}</span>
                 <button
                   class="delete-btn"
@@ -100,7 +100,7 @@
                 :class="{ active: session.id === currentSessionId }"
                 @click="$emit('select', session.id)"
               >
-                <span class="session-title">{{ session.title || $t('ui.newChat') }}</span>
+                <span class="session-title">{{ displaySessionTitle(session.title) }}</span>
                 <span class="session-time">{{ formatRelativeTime(session.updated_at) }}</span>
                 <button
                   class="delete-btn"
@@ -121,6 +121,7 @@
 </template>
 
 <script setup lang="ts">
+import { displaySessionTitle } from '../utils/sessionTitle'
 import { useEscapeClose } from '../composables/useEscapeClose'
 import { computed } from 'vue'
 import type { Session } from '../types'

@@ -58,9 +58,61 @@ async def _require_no_active_files(db: AsyncSession) -> None:
         )
 
 
+def _output_language_for(db_file) -> str | None:
+    """The language a file was processed in, else the language of the current request."""
+    from utils.i18n import current_language
+
+    stored = (getattr(db_file, "output_language", None) or "").strip()
+    if stored:
+        return stored
+    return {"tr": "Turkish", "zh": "Chinese"}.get(current_language(), "English")
+
+
+async def _queue_reembed_all(db: AsyncSession, queue) -> int:
+    """Mark every parsed file for a vector rebuild and queue it. Returns how many were queued.
+
+    Rebuilding uses the segments and summaries already stored in SQLite, so no OCR or LLM
+    call is repeated. Called after the shared collections were dropped.
+    """
+    from uuid import uuid4
+    from sqlalchemy import select
+    from models.file import File
+    from models.segment import Segment
+
+    seg_file_ids = select(Segment.file_id).distinct()
+    result = await db.execute(
+        select(File).where(
+            File.id.in_(seg_file_ids),
+            File.status.in_(["ready", "failed", "cancelled"]),
+        )
+    )
+    files = list(result.scalars().all())
+    to_enqueue: list[tuple[str, str, str | None]] = []
+    for f in files:
+        new_job_id = uuid4().hex
+        f.status = "pending"
+        f.job_id = new_job_id
+        f.error_message = None
+        f.processing_current = 0
+        f.processing_total = None
+        f.processing_message = ui_msg("reembedding_vectors")
+        to_enqueue.append((f.id, new_job_id, _output_language_for(f)))
+    await db.commit()
+
+    enqueued = 0
+    for fid, new_job_id, language in to_enqueue:
+        try:
+            await queue.enqueue_job("reembed_file_task", fid, language, _job_id=new_job_id)
+            enqueued += 1
+        except Exception as exc:
+            logger.warning("Could not enqueue reembed_file_task for %s: %s", fid, exc)
+    return enqueued
+
+
 @router.patch("", response_model=SettingsResponse)
 async def update_settings(
     body: SettingsUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_admin),
 ) -> SettingsResponse:
@@ -131,6 +183,17 @@ async def update_settings(
             await ensure_local_embedding_service(local_url, wait=False)
         elif filtered.get("embedding_source") == "custom":
             await asyncio.to_thread(stop_local_embedding_service)
+
+    if embedding_changed and body.force:
+        # The old vectors were dropped above. Rebuild them with the new model right away;
+        # otherwise every source stays "ready" while search silently finds nothing until
+        # someone remembers to press "Re-index".
+        queue = getattr(request.app.state, "redis", None)
+        if queue is None:
+            logger.warning("Embedding model switched but the task queue is unavailable; vectors were not rebuilt")
+        else:
+            queued = await _queue_reembed_all(db, queue)
+            logger.info("Embedding model switched; queued %d file(s) for a vector rebuild", queued)
 
     all_settings = await _full_settings()
     return SettingsResponse(settings=all_settings)
@@ -497,10 +560,6 @@ async def reindex_all_documents(
 ) -> dict:
     """Drop shared Milvus collections and re-vectorize all parsed files from SQLite segments without re-running OCR/LLM/VLM."""
     import asyncio
-    from uuid import uuid4
-    from sqlalchemy import select
-    from models.file import File
-    from models.segment import Segment
     from services.vector_service import reset_shared_collections
 
     if not body or not body.confirm:
@@ -521,34 +580,7 @@ async def reindex_all_documents(
             detail=ui_msg("vector_reset_failed", error=str(exc)),
         )
 
-    seg_file_ids = select(Segment.file_id).distinct()
-    result = await db.execute(
-        select(File).where(
-            File.id.in_(seg_file_ids),
-            File.status.in_(["ready", "failed", "cancelled"]),
-        )
-    )
-    files = list(result.scalars().all())
-    to_enqueue: list[tuple[str, str]] = []
-    for f in files:
-        new_job_id = uuid4().hex
-        f.status = "pending"
-        f.job_id = new_job_id
-        f.error_message = None
-        f.processing_current = 0
-        f.processing_total = None
-        f.processing_message = ui_msg("reembedding_vectors")
-        to_enqueue.append((f.id, new_job_id))
-
-    await db.commit()
-
-    enqueued = 0
-    for fid, new_job_id in to_enqueue:
-        try:
-            await redis.enqueue_job("reembed_file_task", fid, _job_id=new_job_id)
-            enqueued += 1
-        except Exception as exc:
-            logger.warning("Could not enqueue reembed_file_task for %s: %s", fid, exc)
+    enqueued = await _queue_reembed_all(db, redis)
 
     return {
         "ok": True,

@@ -1,5 +1,7 @@
 import os
+import re
 import sys
+import time
 from pathlib import Path
 
 os.environ.setdefault("GRPC_DNS_RESOLVER", "native")
@@ -42,8 +44,169 @@ logging.basicConfig(
 logger = logging.getLogger("local_notebook")
 
 
+class _MilvusLiteNoiseFilter(logging.Filter):
+    """Drop the gRPC error Milvus Lite logs each time an index is created.
+
+    Milvus Lite does not implement AllocTimestamp; pymilvus calls it while waiting for a new
+    index and carries on without it. The full traceback landed in the log (and in the admin
+    diagnostics) as an ERROR although nothing failed. Other gRPC errors are kept.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        if not isinstance(exc, NotImplementedError):
+            return True
+        tb = record.exc_info[2]
+        while tb is not None:
+            if tb.tb_frame.f_code.co_name == "AllocTimestamp":
+                return False
+            tb = tb.tb_next
+        return True
+
+
+logging.getLogger("grpc._server").addFilter(_MilvusLiteNoiseFilter())
+
+
+def _generate_admin_password() -> str:
+    import secrets
+
+    return secrets.token_urlsafe(12)
+
+
+def _write_admin_password_file(password: str) -> str | None:
+    """Persist a generated password with owner-only permissions so it never lands in logs."""
+    try:
+        path = get_data_dir() / "admin_password.txt"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(password + "\n")
+        return str(path)
+    except Exception:
+        logger.exception("Could not write the generated admin password file")
+        return None
+
+
+async def _ensure_admin_user(db) -> None:
+    """Create the admin account without ever leaving the known default password in place."""
+    from sqlalchemy import select
+
+    from dependencies.auth import hash_password, verify_password
+    from models.user import User
+
+    admin_username = (os.getenv("ADMIN_USERNAME") or "admin").strip() or "admin"
+    env_password = (os.getenv("ADMIN_PASSWORD") or "").strip()
+    env_is_insecure = not env_password or env_password.lower() == "admin"
+
+    result = await db.execute(select(User).where(User.username == admin_username))
+    admin_user = result.scalar_one_or_none()
+
+    if admin_user is None:
+        # A configured strong password is honoured; the default or an unset value is not.
+        password = None if env_is_insecure else env_password
+        generated = password is None
+        if generated:
+            password = _generate_admin_password()
+            path = _write_admin_password_file(password)
+            if path:
+                logger.warning(
+                    "Created the initial admin user '%s' with a generated password. "
+                    "Read it from %s and delete that file after signing in.",
+                    admin_username,
+                    path,
+                )
+            else:
+                logger.warning("Generated admin password for '%s': %s", admin_username, password)
+        admin_user = User(
+            username=admin_username,
+            password_hash=hash_password(password),
+            role="admin",
+        )
+        db.add(admin_user)
+        await db.commit()
+        if not generated:
+            logger.info("Initial admin user is ready: %s", admin_username)
+        return
+
+    if admin_user.role != "admin":
+        admin_user.role = "admin"
+        await db.commit()
+        logger.info("Initial admin user is ready: %s", admin_username)
+
+    if verify_password("admin", admin_user.password_hash):
+        if env_is_insecure:
+            password = _generate_admin_password()
+        else:
+            # An explicit strong ADMIN_PASSWORD in the environment wins over a random one.
+            password = env_password
+        admin_user.password_hash = hash_password(password)
+        await db.commit()
+        if env_is_insecure:
+            path = _write_admin_password_file(password)
+            if path:
+                logger.warning(
+                    "The admin account still used the default password 'admin'; it has been rotated. "
+                    "Read the new password from %s and delete that file after signing in.",
+                    path,
+                )
+            else:
+                logger.warning("Rotated admin password for '%s': %s", admin_username, password)
+        else:
+            logger.warning(
+                "The admin account still used the default password 'admin'; it now uses ADMIN_PASSWORD "
+                "from the environment."
+            )
+
+
+def _cors_ports(frontend_port: str, extra_ports: str = "") -> list[str]:
+    """The frontend's own port, the Vite dev-server default, and any listed in CORS_ALLOW_PORTS."""
+    ports: list[str] = []
+    for raw in [frontend_port or "8080", "5173", *extra_ports.split(",")]:
+        port = raw.strip()
+        if port.isdigit() and 0 < int(port) < 65536 and port not in ports:
+            ports.append(port)
+    return ports
+
+
+def _cors_origin_regex(frontend_port: str, extra_ports: str = "") -> str:
+    """Allow the app's own origin on localhost and private LAN addresses only."""
+    ports = "|".join(re.escape(port) for port in _cors_ports(frontend_port, extra_ports))
+    return (
+        r"^https?://(?:"
+        r"localhost|127\.0\.0\.1|\[::1\]|"
+        r"10(?:\.\d{1,3}){3}|"
+        r"192\.168(?:\.\d{1,3}){2}|"
+        r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"
+        r"):(?:" + ports + r")$"
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.started_at = time.time()
+
+    # A staged restore must be applied before any database or Milvus connection opens.
+    try:
+        from services.backup_service import apply_pending_restore
+
+        applied = apply_pending_restore()
+        if applied:
+            logger.warning(
+                "Applied a staged restore; the previous data was moved to %s",
+                applied.get("safety"),
+            )
+            for warning in applied.get("warnings") or []:
+                logger.warning("Restore note: %s", warning)
+    except Exception:
+        logger.exception("Could not apply a staged restore")
+
+    # Old pre-restore copies, unfetched backup archives and replaced restore uploads.
+    try:
+        from services.backup_service import prune_backups
+
+        prune_backups()
+    except Exception:
+        logger.warning("Could not clean up old backup files", exc_info=True)
+
     from database import engine, Base, ensure_runtime_schema
     import models
     async with engine.begin() as conn:
@@ -58,28 +221,7 @@ async def lifespan(app: FastAPI):
     await cleanup_expired_feature_agent_traces()
 
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
-        from dependencies.auth import hash_password
-        from models.user import User
-
-        admin_username = os.getenv("ADMIN_USERNAME", "admin")
-        admin_password = os.getenv("ADMIN_PASSWORD", "admin")
-        result = await db.execute(select(User).where(User.username == admin_username))
-        admin_user = result.scalar_one_or_none()
-        if admin_user is None:
-            admin_user = User(
-                username=admin_username,
-                password_hash=hash_password(admin_password),
-                role="admin",
-            )
-            db.add(admin_user)
-            await db.commit()
-            logger.info("Initial admin user is ready: %s", admin_username)
-        elif admin_user.role != "admin":
-            admin_user.role = "admin"
-            await db.commit()
-            logger.info("Initial admin user is ready: %s", admin_username)
-
+        await _ensure_admin_user(db)
         await config.load_settings(db)
     logger.info("Settings cache loaded")
 
@@ -210,19 +352,30 @@ class UILanguageMiddleware:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="local-Notebook",
+        title="Local Notebook",
         description="Local-first knowledge base and chat for paper reading",
         version="0.1.0",
         lifespan=lifespan,
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # The app is served from its own origin (frontend port) and may be opened from another
+    # device on the LAN. Allow those origins, not "any origin with credentials".
+    cors_kwargs = {
+        "allow_origin_regex": _cors_origin_regex(
+            os.getenv("FRONTEND_PORT") or "8080", os.getenv("CORS_ALLOW_PORTS") or ""
+        ),
+        "allow_credentials": True,
+        "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        "allow_headers": ["*"],
+    }
+    extra_origins = [
+        origin.strip()
+        for origin in (os.getenv("CORS_ALLOW_ORIGINS") or "").split(",")
+        if origin.strip()
+    ]
+    if extra_origins:
+        cors_kwargs["allow_origins"] = extra_origins
+    app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     app.add_middleware(UILanguageMiddleware)
 

@@ -19,7 +19,8 @@ SESSION_TITLE_STATUS_GENERATING = "generating"
 SESSION_TITLE_STATUS_GENERATED = "generated"
 SESSION_TITLE_STATUS_FAILED = "failed"
 
-PLACEHOLDER_SESSION_TITLES = {"", "新对话", "New chat"}
+# Default titles of unnamed chats, per UI language (older chats stored the translated text).
+PLACEHOLDER_SESSION_TITLES = {"", "新对话", "New chat", "Yeni sohbet"}
 MAX_TITLE_LENGTH = 80
 MAX_PROMPT_QUESTION_LENGTH = 1200
 MAX_PROMPT_FILE_NAMES = 12

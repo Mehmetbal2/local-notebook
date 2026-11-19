@@ -169,6 +169,8 @@ export function useProjectWorkflows({
     pollWorkflowStatus(workflowId)
 
     workflowPollingTimer.value = window.setInterval(() => {
+      // No network traffic while the tab is in the background.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       pollWorkflowStatus(workflowId)
     }, 3000)
   }

@@ -636,6 +636,15 @@
             </div>
           </section>
 
+          <!-- ══ System status (usage, backup, diagnostics) ══ -->
+          <section v-if="activeTab === 'system'" class="settings-section wide">
+            <div class="section-header">
+              <h2>{{ $t('ui.systemStatus') }}</h2>
+              <p class="section-desc">{{ $t('ui.systemStatusDesc') }}</p>
+            </div>
+            <SystemStatusPanel />
+          </section>
+
         </template>
 
 
@@ -678,6 +687,7 @@ import { getSettings, updateSettings, checkPreflight, type SettingsMap } from '.
 import { getToken } from '../services/auth'
 import BaseUrlHelpTooltip from '../components/common/BaseUrlHelpTooltip.vue'
 import AppHeaderActions from '../components/common/AppHeaderActions.vue'
+import SystemStatusPanel from '../components/settings/SystemStatusPanel.vue'
 import { t } from '../i18n'
 
 const router = useRouter()
@@ -715,6 +725,11 @@ const tabs = [
     key: 'websearch',
     labelKey: 'ui.webSearch',
     icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
+  },
+  {
+    key: 'system',
+    labelKey: 'ui.systemStatus',
+    icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>',
   },
 ]
 
@@ -923,7 +938,11 @@ async function save(section: string, force = false) {
     Object.assign(saved, DEFAULT_SETTINGS, updated)
     Object.assign(draft, updated)
     savedEmbeddingSource.value = saved.embedding_source || ''
-    showToast(t('ui.savedSuccessfully'), 'success')
+    // A confirmed embedding switch rebuilds every source's vectors in the background.
+    showToast(
+      section === 'embedding' && force ? t('ui.embeddingSwitchReindexStarted') : t('ui.savedSuccessfully'),
+      'success'
+    )
   } catch (e: any) {
     const detail = e?.response?.data?.detail
     if (detail) {
@@ -1363,6 +1382,9 @@ function showToast(msg: string, type: 'success' | 'error') {
 
 .settings-section {
   max-width: 560px;
+}
+.settings-section.wide {
+  max-width: 1120px;
 }
 
 .section-header {

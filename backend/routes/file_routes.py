@@ -96,6 +96,13 @@ def _resolve_db_file_path(db_file: File) -> Path:
     )
 
 
+def _request_output_language() -> str:
+    """Model output language matching the interface language of the current request."""
+    from utils.i18n import current_language
+
+    return {"tr": "Turkish", "zh": "Chinese"}.get(current_language(), "English")
+
+
 ACTIVE_FILE_STATUSES = {"pending", "processing"}
 STOPPABLE_TO_RETRY_STATUSES = {"cancelled", "failed", "ready"}
 MAX_BATCH_FILES = 200
@@ -132,6 +139,12 @@ async def _delete_file(db: AsyncSession, db_file: File, request: Request | None 
     from models.segment import Segment
     from models.block import Block
     from models.image import Image
+    from models.project import Project
+
+    project_id = db_file.project_id
+    # Files processed before the language was stored have none; fall back to the UI
+    # language so the rebuilt overview is not silently written in English.
+    output_language = db_file.output_language or _request_output_language()
 
     # A running parse would keep writing blocks and vectors for a file that no longer exists.
     await _stop_file_processing(request, db, db_file, wait=True)
@@ -154,7 +167,32 @@ async def _delete_file(db: AsyncSession, db_file: File, request: Request | None 
     await db.execute(sa_delete(Block).where(Block.file_id == db_file.id))
     await db.execute(sa_delete(Image).where(Image.file_id == db_file.id))
     await db.delete(db_file)
+    # A project overview that mentioned this file is now wrong; clear it rather than
+    # leaving a stale description ("one PDF" for a project with zero files).
+    project = await db.get(Project, project_id)
+    summary_cleared = bool(project is not None and (project.summary or "").strip())
+    if summary_cleared:
+        project.summary = None
     await db.commit()
+
+    # Rebuild the overview from the remaining sources in the background: the user should
+    # not wait for an LLM call while deleting a file.
+    from sqlalchemy import func
+
+    remaining_ready = await db.scalar(
+        select(func.count())
+        .select_from(File)
+        .where(File.project_id == project_id, File.status == "ready")
+    )
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    queue = getattr(app_state, "redis", None) if app_state is not None else None
+    if queue is not None and remaining_ready and summary_cleared:
+        try:
+            await queue.enqueue_job(
+                "refresh_project_summary_task", project_id, output_language
+            )
+        except Exception as exc:
+            logger.warning(f"Could not enqueue project summary refresh for {project_id}: {exc}")
 
 
 @router.get("", response_model=list[FileResponse])
@@ -482,19 +520,42 @@ async def reprocess_file(
     if redis is None:
         raise HTTPException(status_code=503, detail=ui_msg("queue_unavailable_file"))
     from sqlalchemy import func
+    from sqlalchemy.exc import OperationalError
     from models.segment import Segment
-    seg_count_res = await db.execute(
-        select(func.count()).select_from(Segment).where(Segment.file_id == db_file.id)
+
+    # This endpoint reads (SELECT count) and then writes in the same transaction. Under WAL,
+    # a read snapshot that is upgraded to a write can fail immediately with SQLITE_BUSY_SNAPSHOT
+    # (busy_timeout does not apply), so retry the read+write unit briefly instead of returning 500.
+    import asyncio
+
+    task_name = ""
+    for attempt in range(3):
+        try:
+            seg_count_res = await db.execute(
+                select(func.count()).select_from(Segment).where(Segment.file_id == db_file.id)
+            )
+            has_segments = (seg_count_res.scalar() or 0) > 0
+            task_name = "reembed_file_task" if has_segments else "parse_file_task"
+            db_file.status = "pending"
+            db_file.error_message = None
+            db_file.processing_current = 0
+            db_file.processing_total = None
+            db_file.processing_message = None
+            await db.commit()
+            break
+        except OperationalError as exc:
+            await db.rollback()
+            if attempt == 2 or "locked" not in str(exc).lower():
+                raise
+            await asyncio.sleep(0.05 * (attempt + 1))
+            db_file = await _get_file_or_404(db, file_id, current_user)
+            if db_file.status not in STOPPABLE_TO_RETRY_STATUSES:
+                raise HTTPException(status_code=409, detail=ui_msg("file_not_reprocessable"))
+    output_language = (
+        (body.output_language if body else None)
+        or db_file.output_language
+        or _request_output_language()
     )
-    has_segments = (seg_count_res.scalar() or 0) > 0
-    task_name = "reembed_file_task" if has_segments else "parse_file_task"
-    db_file.status = "pending"
-    db_file.error_message = None
-    db_file.processing_current = 0
-    db_file.processing_total = None
-    db_file.processing_message = None
-    await db.commit()
-    output_language = (body.output_language if body else None) or None
     job = await redis.enqueue_job(task_name, db_file.id, output_language)
     db_file.job_id = job.job_id
     await db.commit()
@@ -774,7 +835,9 @@ async def get_file_raw(
     elif db_file.file_type in ("txt", "md", "markdown"):
         content_type = "text/plain; charset=utf-8"
     elif db_file.file_type in ("htm", "html"):
-        content_type = "text/html; charset=utf-8"
+        # Serve uploaded HTML as plain text and as a download. Rendering it from the API
+        # origin would let a malicious upload run scripts against the app.
+        content_type = "text/plain; charset=utf-8"
     elif db_file.file_type == "wav":
         content_type = "audio/wav"
     elif db_file.file_type == "mp3":
@@ -786,11 +849,12 @@ async def get_file_raw(
 
     encoded_filename = quote(db_file.file_name, safe="")
 
+    disposition = "attachment" if db_file.file_type in ("htm", "html") else "inline"
     return FastAPIFileResponse(
         path=str(file_path),
         media_type=content_type,
         headers={
-            "Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}"
+            "Content-Disposition": f"{disposition}; filename*=UTF-8''{encoded_filename}"
         }
     )
 

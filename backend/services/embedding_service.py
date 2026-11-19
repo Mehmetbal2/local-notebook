@@ -287,6 +287,72 @@ async def _get_config() -> tuple[str, str, str, str]:
 EMBED_BATCH_SIZE = 10
 
 
+# A provider that is briefly overloaded (429/5xx) or slow should not fail a whole file:
+# a failed parse is retried by the task queue from the start, which repeats every
+# (paid) LLM summary call. Retry the single batch instead.
+EMBED_MAX_ATTEMPTS = max(1, int(os.getenv("EMBED_MAX_ATTEMPTS", "3")))
+_RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+
+async def _post_embedding_batch(
+    url: str,
+    payload: dict,
+    headers: dict,
+    mode: str,
+    base_url: str,
+    batch_no: int,
+) -> httpx.Response:
+    last_error: Exception | None = None
+    local_restart_tried = False
+    for attempt in range(1, EMBED_MAX_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+            logger.info(f"[embed] batch {batch_no} status={resp.status_code}")
+            resp.raise_for_status()
+            return resp
+        except httpx.ConnectError:
+            if mode == "local" and is_local_embedding_url(base_url) and not local_restart_tried:
+                local_restart_tried = True
+                started = await ensure_local_embedding_service(base_url, wait=True)
+                if not started.get("ok"):
+                    raise RuntimeError(
+                        f"Cannot connect to the local embedding service ({base_url}): {started.get('error', '')}"
+                    )
+                last_error = RuntimeError(f"Local embedding service restarted ({base_url})")
+                continue  # the service is up now; try again without waiting
+            last_error = RuntimeError(
+                f"Cannot connect to the embedding service ({base_url}). "
+                "Configure the embedding service address in Settings first. "
+                "For local mode, start it with: cd services/embedding && python server.py"
+            )
+        except httpx.ReadTimeout:
+            last_error = RuntimeError(
+                f"Embedding service timed out ({base_url}). "
+                "Check whether the embedding service is running correctly."
+            )
+        except httpx.HTTPStatusError as e:
+            error = RuntimeError(
+                f"Embedding service returned error {e.response.status_code}: {e.response.text}"
+            )
+            if e.response.status_code not in _RETRYABLE_STATUS:
+                raise error
+            last_error = error
+        if attempt < EMBED_MAX_ATTEMPTS:
+            delay = min(10.0, 1.5 * 2 ** (attempt - 1))
+            logger.warning(
+                "[embed] batch %s failed (%s); retrying in %.1fs (%d/%d)",
+                batch_no,
+                last_error,
+                delay,
+                attempt,
+                EMBED_MAX_ATTEMPTS,
+            )
+            await asyncio.sleep(delay)
+    assert last_error is not None
+    raise last_error
+
+
 async def embed_texts(
     texts: list[str],
     progress_callback: Callable[[int], Awaitable[None]] | None = None,
@@ -319,37 +385,9 @@ async def embed_texts(
         ]
 
         payload: dict = {"model": model, "input": batch}
-
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                logger.info(f"[embed] batch {batch_start//batch_size + 1} status={resp.status_code}")
-                resp.raise_for_status()
-        except httpx.ConnectError:
-            if mode == "local" and is_local_embedding_url(base_url):
-                started = await ensure_local_embedding_service(base_url, wait=True)
-                if started.get("ok"):
-                    async with httpx.AsyncClient(timeout=120) as client:
-                        resp = await client.post(url, json=payload, headers=headers)
-                        logger.info(f"[embed] batch {batch_start//batch_size + 1} status={resp.status_code} (after auto-start)")
-                        resp.raise_for_status()
-                else:
-                    raise RuntimeError(
-                        f"Cannot connect to the local embedding service ({base_url}): {started.get('error', '')}"
-                    )
-            else:
-                raise RuntimeError(
-                    f"Cannot connect to the embedding service ({base_url}). "
-                    "Configure the embedding service address in Settings first. "
-                    "For local mode, start it with: cd services/embedding && python server.py"
-                )
-        except httpx.ReadTimeout:
-            raise RuntimeError(
-                f"Embedding service timed out ({base_url}). "
-                "Check whether the embedding service is running correctly."
-            )
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Embedding service returned error {e.response.status_code}: {e.response.text}")
+        resp = await _post_embedding_batch(
+            url, payload, headers, mode, base_url, batch_start // batch_size + 1
+        )
 
         data = resp.json()
         items = sorted(data["data"], key=lambda x: x["index"])

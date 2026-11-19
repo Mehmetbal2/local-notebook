@@ -69,6 +69,38 @@ FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
 EMBEDDING_PID_FILE="$RUN_DIR/embedding.pid"
 EMBEDDING_PORT_FILE="$RUN_DIR/embedding.port"
 
+# Read one value from the settings table; prints nothing when the database or key is missing.
+read_setting() {
+  local key="$1" db_file="$DATA_DIR/local_notebook.db"
+  [[ -f "$db_file" ]] || return 0
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$db_file" "SELECT value FROM settings WHERE key='$key' LIMIT 1;" 2>/dev/null || true
+  elif [[ -x "$PYTHON_BIN" ]]; then
+    "$PYTHON_BIN" - "$db_file" "$key" 2>/dev/null <<'PY' || true
+import sqlite3, sys
+row = sqlite3.connect(sys.argv[1]).execute(
+    "SELECT value FROM settings WHERE key=? LIMIT 1", (sys.argv[2],)
+).fetchone()
+print(row[0] if row else "")
+PY
+  fi
+}
+
+# The backend talks to the local embedding service at the address saved in Settings
+# (embedding_local_url) and would start it on that port itself. Use the same port here,
+# so the two never disagree; EMBEDDING_PORT is only the fallback when nothing is saved.
+resolve_embedding_port() {
+  local url port
+  url="$(read_setting embedding_local_url)"
+  [[ -n "$url" ]] || return 0
+  port="$(printf '%s' "$url" | sed -nE 's#^https?://(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:([0-9]+))?(/.*)?$#\3#p')"
+  if [[ -n "$port" && "$port" != "$EMBEDDING_PORT" ]]; then
+    echo "Using embedding port $port from Settings (EMBEDDING_PORT was $EMBEDDING_PORT)."
+    EMBEDDING_PORT="$port"
+  fi
+}
+resolve_embedding_port
+
 is_running() {
   local pid_file="$1"
   if [[ -f "$pid_file" ]]; then
@@ -267,7 +299,7 @@ start_services() {
   fi
 
   echo ""
-  echo "local-Notebook is running:"
+  echo "Local Notebook is running:"
   echo "  Frontend: http://localhost:$FRONTEND_PORT"
   echo "  Backend:  http://localhost:$BACKEND_PORT/health"
   if searxng_enabled && docker_ready; then
@@ -314,7 +346,7 @@ case "$CMD" in
     if [[ "${LOCAL_NOTEBOOK_KEEP_SEARXNG:-0}" != "1" ]]; then
       stop_searxng
     fi
-    echo "All local-Notebook services stopped."
+    echo "All Local Notebook services stopped."
     ;;
   restart)
     shift || true

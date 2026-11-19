@@ -324,7 +324,7 @@ async def _recover_stuck_files(session_factory) -> None:
         arq_pool = await _get_arq_pool()
 
         from uuid import uuid4
-        to_enqueue: list[tuple[str, str, str, str]] = []
+        to_enqueue: list[tuple[str, str, str, str, str | None]] = []
         for f in stuck:
             seg_count_res = await db.execute(
                 select(func.count()).select_from(Segment).where(Segment.file_id == f.id)
@@ -343,18 +343,19 @@ async def _recover_stuck_files(session_factory) -> None:
             f.processing_current = 0
             f.processing_total = None
             f.processing_message = None
-            to_enqueue.append((f.id, f.project_id, new_job_id, task_name))
+            to_enqueue.append((f.id, f.project_id, new_job_id, task_name, f.output_language))
 
         await _shielded_commit(db)
 
-    for fid, pid, new_job_id, task_name in to_enqueue:
+    for fid, pid, new_job_id, task_name, language in to_enqueue:
         try:
             await asyncio.to_thread(delete_by_file, pid, fid)
         except Exception as exc:
             logger.warning(f"Could not delete old vectors for recovered file {fid}: {exc}")
         if arq_pool is not None:
             try:
-                await arq_pool.enqueue_job(task_name, fid, _job_id=new_job_id)
+                # Without the stored language a recovered file would be summarized in English.
+                await arq_pool.enqueue_job(task_name, fid, language, _job_id=new_job_id)
                 logger.info(f"Re-enqueued file {fid} ({task_name}, job_id={new_job_id})")
             except Exception as exc:
                 logger.warning(f"Could not enqueue recovered file {fid} ({task_name}): {exc}")
@@ -395,6 +396,10 @@ async def parse_file_task(
     session_factory = ctx["session_factory"]
     stop_reason: str | None = None
     project_id = ""
+    # Set once blocks, segments and their (paid) summaries are committed. A failure after
+    # that point must not send the whole file back through the queue's retry, which would
+    # delete them and pay for every summary again.
+    content_saved = False
 
     async with _safe_session(session_factory) as db:
         db_file = await db.get(File, file_id)
@@ -417,6 +422,10 @@ async def parse_file_task(
         project_id = db_file.project_id
         project = await db.get(Project, project_id)
         user_id = project.owner_user_id if project else None
+        if output_language:
+            # Remember the chosen language so a later reprocess without an explicit
+            # language keeps it instead of falling back to English.
+            db_file.output_language = output_language
 
         try:
             logger.info(f"Parsing file {file_id} ({file_name}, type={file_type})")
@@ -548,14 +557,7 @@ async def parse_file_task(
                     logger.warning(f"[{file_name}] segment summary step failed, continuing: {e}")
 
             await _raise_if_file_cancelled(file_id)
-            logger.info(f"[{file_name}] step 3: embedding {len(segments)} segments")
-            from services.embedding_service import embed_texts
-            contents = [s.content for s in segments]
-            vectors = await embed_texts(contents, progress_callback=progress.advance)
-            logger.info(f"[{file_name}] embedding done, dim={len(vectors[0])}")
-
-            await _raise_if_file_cancelled(file_id)
-            logger.info(f"[{file_name}] step 4/5: storing vectors, blocks, segments & images")
+            logger.info(f"[{file_name}] step 3/5: storing blocks, segments & images")
             from services.vector_service import (
                 ensure_collection, upsert_chunks,
                 ensure_image_collection, upsert_image_chunks
@@ -564,9 +566,10 @@ async def parse_file_task(
             from models.image import Image
             import json as _json
 
-            dim = len(vectors[0])
-            await asyncio.to_thread(ensure_collection, project_id, dim)
-
+            # Persist the parsed content and the (paid) LLM summaries BEFORE embedding.
+            # If the embedding service is briefly unreachable, these rows survive on the
+            # failed file and a later reprocess routes to reembed_file_task, which rebuilds
+            # only the vectors instead of re-running OCR/LLM from scratch.
             await db.execute(sa_delete(Block).where(Block.file_id == file_id))
             await db.execute(sa_delete(Segment).where(Segment.file_id == file_id))
             await db.execute(sa_delete(Image).where(Image.file_id == file_id))
@@ -626,8 +629,19 @@ async def parse_file_task(
             await _shielded_commit(db)
             logger.info(
                 f"[{file_name}] committed {len(db_blocks)} blocks, "
-                f"{len(db_segments)} segments, {db_image_count} images"
+                f"{len(db_segments)} segments, {db_image_count} images "
+                f"(summaries preserved before embedding)"
             )
+            content_saved = True
+
+            await _raise_if_file_cancelled(file_id)
+            logger.info(f"[{file_name}] step 4/5: embedding {len(segments)} segments")
+            from services.embedding_service import embed_texts
+            contents = [s.content for s in segments]
+            vectors = await embed_texts(contents, progress_callback=progress.advance)
+            dim = len(vectors[0])
+            logger.info(f"[{file_name}] embedding done, dim={dim}")
+            await asyncio.to_thread(ensure_collection, project_id, dim)
 
             chunks = [
                 {
@@ -747,7 +761,12 @@ async def parse_file_task(
             db_file.error_message = str(exc)
             db_file.updated_at = datetime.now(timezone.utc)
             await _shielded_commit(db)
-            raise
+            if not content_saved:
+                raise
+            # The content and summaries are stored; only the vector stage failed. Rebuild the
+            # vectors from them instead of letting the queue re-run the whole parse.
+            await _queue_vector_rebuild(file_id, output_language)
+            return {"status": "failed", "file_id": file_id, "content_saved": True}
 
     # Clean up only after the session above is closed: its transaction may still hold the
     # SQLite write lock until then, and a second session would wait on it.
@@ -759,6 +778,73 @@ async def parse_file_task(
         if stop_reason == "task_cancelled":
             raise asyncio.CancelledError()
     return {"status": "cancelled", "file_id": file_id}
+
+
+async def _queue_vector_rebuild(file_id: str, output_language: str | None) -> None:
+    """Queue reembed_file_task for a file whose content is stored but whose vectors failed."""
+    try:
+        queue = await _get_arq_pool()
+        if queue is None:
+            return
+        try:
+            await queue.enqueue_job("reembed_file_task", file_id, output_language)
+            logger.info(f"Queued a vector rebuild for {file_id} after the embedding step failed")
+        finally:
+            from services.local_queue import get_active_local_queue
+
+            if queue is not get_active_local_queue():
+                await queue.aclose()
+    except Exception as exc:
+        logger.warning(f"Could not queue a vector rebuild for {file_id}: {exc}")
+
+
+async def _generate_missing_file_summary(db, db_file, segments, output_language: str | None) -> None:
+    """Regenerate the file-level overview for a file that never reached that step.
+
+    A parse that fails while embedding leaves stored segments (and their summaries) but
+    no file summary, because the overview is produced after embedding. Recovery through
+    reembed_file_task would then mark the file ready without an overview, so fill it in
+    there when it is missing. Failures stay non-fatal: the vectors are already rebuilt.
+    """
+    import json as _json
+    from models.project import Project
+    from services.summary_service import (
+        _resolve_llm,
+        generate_file_summary,
+        normalize_output_language,
+    )
+
+    stored = [s.summary for s in segments if (s.summary or "").strip()]
+    if not stored:
+        return
+    try:
+        llm_cfg = await _resolve_llm()
+        if not llm_cfg:
+            return
+        ak, bu, md, fmt = llm_cfg
+        project = await db.get(Project, db_file.project_id)
+        user_id = project.owner_user_id if project else None
+        result = await generate_file_summary(
+            db_file.file_name,
+            stored,
+            ak,
+            bu,
+            md,
+            api_format=fmt,
+            output_language=normalize_output_language(output_language),
+            user_id=user_id,
+        )
+        if result.get("summary"):
+            db_file.summary = result["summary"]
+        if result.get("keywords"):
+            db_file.keywords = _json.dumps(result["keywords"], ensure_ascii=False)
+        if result.get("summary") or result.get("keywords"):
+            await _shielded_commit(db)
+            logger.info(f"[{db_file.file_name}] missing file summary regenerated after re-embed")
+    except Exception as exc:
+        logger.warning(
+            f"[{db_file.file_name}] could not regenerate file summary after re-embed: {exc}"
+        )
 
 
 async def reembed_file_task(
@@ -860,6 +946,9 @@ async def reembed_file_task(
                     ]
                     await asyncio.to_thread(upsert_image_chunks, project_id, image_chunks)
 
+                if not (db_file.summary or "").strip():
+                    await _generate_missing_file_summary(db, db_file, segments, output_language)
+
                 db_file.status = "ready"
                 db_file.error_message = None
                 db_file.processing_message = None
@@ -948,19 +1037,63 @@ async def _update_project_summary(
     summary = overview.get("summary")
     color = overview.get("color")
     if summary or color:
-        project = await db.get(Project, project_id)
-        if not project:
-            await _shielded_commit(db)
-            return
+        # Update with an explicit rowcount instead of a cached ORM object: the project can
+        # be deleted while the model is writing, and a stale UPDATE would raise
+        # "expected to update 1 row(s); 0 were matched".
+        from sqlalchemy import update
+
+        values: dict[str, str] = {}
         if summary:
-            project.summary = summary
+            values["summary"] = summary
         if color:
-            project.color = color
+            values["color"] = color
+        result = await db.execute(
+            update(Project).where(Project.id == project_id).values(**values)
+        )
+        if not result.rowcount:
+            await db.rollback()
+            logger.info(
+                "Project %s was deleted while its overview was generated; update dropped",
+                project_id,
+            )
+            return
         await _shielded_commit(db)
         logger.info(
             f"Project {project_id} overview updated "
             f"({len(summary or '')} chars, color={color or 'unchanged'})"
         )
+
+
+async def refresh_project_summary_task(
+    ctx: dict,
+    project_id: str,
+    output_language: str | None = None,
+) -> dict:
+    """Rebuild a project's overview after its set of sources changed (e.g. a file was deleted)."""
+    from models.project import Project
+    from services.summary_service import _resolve_llm
+
+    set_ui_language(output_language)
+    session_factory = ctx["session_factory"]
+    async with _safe_session(session_factory) as db:
+        project = await db.get(Project, project_id)
+        if not project:
+            return {"status": "skipped", "reason": "project not found"}
+        llm_cfg = await _resolve_llm()
+        if not llm_cfg:
+            return {"status": "skipped", "reason": "llm not configured"}
+        ak, bu, md, fmt = llm_cfg
+        await _update_project_summary(
+            db,
+            project_id,
+            ak,
+            bu,
+            md,
+            fmt,
+            output_language=output_language,
+            user_id=project.owner_user_id,
+        )
+        return {"status": "ok", "project_id": project_id}
 
 
 async def _describe_images(
@@ -2161,7 +2294,12 @@ from workers.deep_research import deep_research_task  # noqa: E402
 class WorkerSettings:
     functions = [
         parse_file_task,
-        reembed_file_task,
+        # embed_texts already retries each batch on transient errors (EMBED_MAX_ATTEMPTS), so
+        # a queue-level retry is only for a short Milvus or database hiccup: one more try,
+        # not three full re-embeds of the file.
+        func(reembed_file_task, max_tries=2),
+        # Each attempt is an LLM call; one retry covers a transient provider error.
+        func(refresh_project_summary_task, max_tries=2),
         func(generate_feature_task, max_tries=1),
         func(deep_research_task, max_tries=1),
         # Workflow generation is not idempotent yet; avoid ARQ replay appending duplicate steps.

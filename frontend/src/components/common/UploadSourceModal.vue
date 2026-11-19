@@ -64,7 +64,10 @@
                 {{ $t('ui.webSourcesQueriesUsed') }}
                 <span v-for="q in webQueries" :key="q" class="web-query-chip">{{ q }}</span>
               </p>
-              <p v-if="webRankState === 'ranking'" class="web-rank-state">
+              <p v-if="webExpanding" class="web-rank-state">
+                <span class="web-spinner small"></span>{{ $t('ui.webSourcesFindingMore') }}
+              </p>
+              <p v-else-if="webRankState === 'ranking'" class="web-rank-state">
                 <span class="web-spinner small"></span>{{ $t('ui.webSourcesRanking') }}
               </p>
               <p v-else-if="webRankState === 'unranked'" class="web-rank-state muted">{{ $t('ui.webSourcesRankUnavailable') }}</p>
@@ -293,6 +296,7 @@ import {
 } from '../../constants/fileTypes'
 import { getModelOutputLanguage, t } from '@/i18n'
 import {
+  expandWebSources,
   importWebSources,
   rankWebSources,
   searchWebSources,
@@ -343,6 +347,7 @@ const webQueries = ref<string[]>([])
 const webResults = ref<WebSourceResult[]>([])
 // Model ordering runs after the results are shown: idle → ranking → ranked | unranked
 const webRankState = ref<'idle' | 'ranking' | 'ranked' | 'unranked'>('idle')
+const webExpanding = ref(false)
 const lessRelevantFrom = ref<number | null>(null)
 let searchSeq = 0
 const selectedUrls = ref(new Set<string>())
@@ -399,11 +404,13 @@ async function runWebSearch() {
   selectedUrls.value = new Set()
   for (const key of Object.keys(importErrors)) delete importErrors[key]
   webRankState.value = 'idle'
+  webExpanding.value = false
   lessRelevantFrom.value = null
   const seq = ++searchSeq
   const query = webQuery.value.trim()
   const scope = webScope.value
   try {
+    // Phase 1: the user's own query, shown as soon as the search engine answers.
     const data = await searchWebSources(props.projectId, query, scope, getModelOutputLanguage())
     if (seq !== searchSeq) return
     webQueries.value = data.queries || []
@@ -415,7 +422,34 @@ async function runWebSearch() {
   } finally {
     if (seq === searchSeq) webSearching.value = false
   }
-  void rankResults(seq, query, scope)
+  void enrichAndRank(seq, query, scope)
+}
+
+async function enrichAndRank(seq: number, query: string, scope: WebScope) {
+  if (!props.projectId) return
+  // Phase 2: extra queries from the model. Best effort; phase 1 is already on screen.
+  webExpanding.value = true
+  try {
+    const excludeUrls = webResults.value.map(r => r.url)
+    const data = await expandWebSources(
+      props.projectId,
+      query,
+      scope,
+      excludeUrls,
+      getModelOutputLanguage()
+    )
+    if (seq !== searchSeq) return
+    if (data.queries?.length) webQueries.value = data.queries
+    const known = new Set(webResults.value.map(r => r.url))
+    const added = (data.results || []).filter(r => !known.has(r.url))
+    if (added.length) webResults.value = [...webResults.value, ...added]
+  } catch {
+    // Expansion is optional; ranking still runs on the first-phase results.
+  } finally {
+    if (seq === searchSeq) webExpanding.value = false
+  }
+  if (seq !== searchSeq) return
+  await rankResults(seq, query, scope)
 }
 
 async function rankResults(seq: number, query: string, scope: WebScope) {
@@ -541,6 +575,7 @@ function exitWebMode() {
 function resetWebSearch() {
   searchSeq++
   webRankState.value = 'idle'
+  webExpanding.value = false
   lessRelevantFrom.value = null
   isWebMode.value = false
   webSearching.value = false

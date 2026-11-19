@@ -1,5 +1,5 @@
 """
-local-Notebook Embedding Service
+Local Notebook Embedding Service
 =================================
 OpenAI-compatible embedding server backed by sentence-transformers.
 
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="local-Notebook Embedding Service",
+    title="Local Notebook Embedding Service",
     description="OpenAI-compatible /embeddings endpoint backed by sentence-transformers",
     version="0.1.0",
     lifespan=lifespan,

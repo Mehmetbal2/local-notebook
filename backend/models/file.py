@@ -37,6 +37,9 @@ class File(Base):
 
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     keywords: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Language the user chose when the file was processed; reused when reprocessing
+    # without an explicit language so the output does not silently switch to English.
+    output_language: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
 
     created_at: Mapped[datetime] = mapped_column(

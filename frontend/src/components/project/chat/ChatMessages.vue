@@ -190,7 +190,7 @@
               class="unsourced-badge"
               :title="$t('ui.unsourcedAnswerTooltip')"
             >{{ $t('ui.unsourcedAnswer') }}</span>
-            <span v-else class="agent-role-label">{{ msg.agent_role === 'analysis' ? $t('ui.analysisAssistant') : $t('ui.xiaoluo') }}</span>
+            <span v-else class="agent-role-label">{{ msg.agent_role === 'analysis' ? $t('ui.analysisAssistant') : $t('ui.assistantName') }}</span>
             <span class="message-time">{{ formatMessageTime(msg.created_at) }}</span>
           </div>
         </div>

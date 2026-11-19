@@ -13,7 +13,7 @@ class LocalJob:
 
 
 class LocalTaskQueue:
-    """In-process async task queue compatible with the ARQ pool interface used by local-Notebook."""
+    """In-process async task queue compatible with the ARQ pool interface used by Local Notebook."""
 
     def __init__(
         self,
