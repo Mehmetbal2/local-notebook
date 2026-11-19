@@ -122,3 +122,7 @@ kimi_paper.pdf
 # ── Logs & misc ─────────────────────────────────────────────────────────────
 *.log
 dump.rdb
+
+# Local tool settings and scratch files
+.claude/
+.preview_tmp/

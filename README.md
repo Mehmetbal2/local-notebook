@@ -1,146 +1,156 @@
-# local-Notebook
+<p align="center">
+  <img src="docs/assets/banner-tr.png" alt="Local Notebook: kaynaklarınıza sorun, her yanıtı kaynağında doğrulayın" width="100%">
+</p>
 
-[中文](./README.zh.md)
+<p align="center">
+  <b>Türkçe</b> · <a href="README.en.md">English</a>
+</p>
 
-> **A fully local NotebookLM-style application for long, unstructured documents, with a codebase designed for multi-tenant expansion.**
->
-> In healthcare, legal, finance, compliance, research, and other high-accuracy workflows, hallucinations and missing details are unacceptable, especially when documents span hundreds of pages. local-Notebook links every answer back to precise source locations so users can verify evidence with one click. Data can stay on the local machine or inside a private network.
+<p align="center">
+  <img alt="Lisans: Apache-2.0" src="https://img.shields.io/badge/lisans-Apache--2.0-0b57d0">
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776ab">
+  <img alt="Vue 3" src="https://img.shields.io/badge/vue-3-42b883">
+  <img alt="Yerel öncelikli" src="https://img.shields.io/badge/veri-yerelde%20kal%C4%B1r-2e7d32">
+</p>
 
-## Demo
+# Local Notebook
 
-![Demo screenshot](./docs/screenshots/demo-en.png)
-![Demo screenshot](./docs/screenshots/book-demo-en-1.png)
-![Demo screenshot](./docs/screenshots/book-demo-en-2.png)
+**Local Notebook**, kitap, makale, ders notu ve arşiv belgeleriyle çalışanlar için bilgisayarınızda çalışan bir araştırma not defteridir. Kaynaklarınızı yüklersiniz, onlara soru sorarsınız; her yanıt, alındığı paragrafa tek tıkla götüren atıflarla gelir. Belgeleriniz, veritabanınız ve vektör indeksiniz kendi makinenizde kalır.
 
-> Video demo coming later.
+<p align="center">
+  <img src="docs/screenshots/workspace.png" alt="Çalışma alanı: solda kaynakta vurgulanan paragraf, ortada atıflı yanıt, sağda hızlı araçlar" width="100%">
+</p>
 
-## What It Solves
+## Neden Local Notebook?
 
-NotebookLM-like products validate the “documents as context” workflow, but two production problems remain:
+- **Her iddia kaynağına bağlı.** Yanıtlardaki numaralı atıflar kaynağı açar ve ilgili paragrafı vurgular; PDF'lerde sayfa ve blok konumuna, ses kayıtlarında zaman damgasına gider.
+- **Verileriniz sizde.** Arka uç, arayüz, SQLite veritabanı, vektör deposu (Milvus Lite) ve yüklenen dosyalar bilgisayarınızda çalışır. Dil modeli olarak bulut API'si ya da Ollama, vLLM gibi yerel bir sunucu kullanabilirsiniz.
+- **Uzun ve çok dilli belgeler için.** Yüzlerce sayfalık metinler parçalanır, özetlenir ve çok dilli bge-m3 gömme modeliyle indekslenir. Aramalar büyük-küçük harf, aksan ve harekeden bağımsızdır: "maverdi" yazınca "Mâverdî" bulunur, Arapça metinler harekeli ya da harekesiz eşleşir.
+- **Türkçe arayüz.** Arayüz Türkçe, İngilizce ve Çince kullanılabilir; çıktıların dili ayrıca seçilebilir.
 
-1. **Data must be uploaded to external services**: contracts, private data, and internal research often cannot leave the organization.
-2. **Citations are too coarse**: document-level citations still require manual searching in long files.
+## Özellikler
 
-local-Notebook is designed around these constraints:
+### Kaynaklar
+- PDF, DOCX, DOC, TXT, MD, HTML, EPUB, görsel (JPG/PNG) ve ses (WAV/MP3/M4A) dosyaları; panodan metin yapıştırma.
+- PDF'ler için özgün görünüm ile ayrıştırılmış metin arasında geçiş, tarama PDF'ler için isteğe bağlı OCR.
+- Kaynak adlarını "Yazar - Yıl - Eser" biçiminde düzenleme önerisi.
+- Kaynak panelinde başlıkta ve isteğe bağlı olarak içerikte arama; bulunanlarla sohbet etme.
 
-- **Fully offline-capable deployment**: backend, frontend, vector database, and file storage can run locally. LLMs can also use local OpenAI-compatible services such as Ollama or vLLM.
-- **Block-level citations**: answers link directly to page and paragraph positions, with timestamp support for audio.
-- **Multi-tenant-oriented architecture**: FastAPI, SQLAlchemy, and background workers make it practical to evolve from a single-user local app to an intranet or enterprise deployment.
-- **Provider-agnostic LLM integration**: works with OpenAI-compatible APIs, whether private, local, or commercial.
-- **Optimized for long documents**: chunking, cross-block citation tracking, and retrieval ranking are tuned for hundreds-of-pages documents and large projects.
+### Web ve akademik arama
+- **Hızlı arama:** Sonuçlar hemen gelir ve **Tam metin / Açık erişim / Yalnızca özet** olarak işaretlenir. Seçtikleriniz kaynak olarak eklenir; ücretsiz bir PDF varsa (OpenAlex, Semantic Scholar) PDF olarak gelir.
+- **Derin araştırma:** Konu alt sorulara bölünür, 20–30 kaynak baştan sona okunur ve atıflı bir rapor yazılır (5–15 dakika, arka planda).
+- Arama, Docker'da çalışan yerel bir [SearXNG](https://github.com/searxng/searxng) üzerinden yapılır; API anahtarı gerekmez.
 
-## Project Layout
+<p align="center">
+  <img src="docs/screenshots/add-sources.png" alt="Kaynak ekleme: web veya akademik arama, dosya yükleme, metin yapıştırma" width="80%">
+</p>
 
-| Directory | Responsibility | Docs |
-|---|---|---|
-| [backend/](./backend) | FastAPI service: API routes, agent chat, citation parsing, vector retrieval, ARQ tasks | [backend/README.md](./backend/README.md) |
-| [frontend/](./frontend) | Vue 3 + Vite app: project management, chat UI, settings, source navigation | [frontend/README.md](./frontend/README.md) |
-| [services/](./services) | Optional local model services: Embedding / FunASR for offline deployments; SearXNG for web search | [services/README.md](./services/README.md), [services/searxng/README.md](./services/searxng/README.md) |
+### Sohbet ve çıktılar
+- Seçili kaynaklarla veya web aramasıyla sohbet; durdurulan yanıtlar da kaydedilir. Sohbet başlıkları otomatik üretilir.
+- **Öğrenme araçları:** çalışma rehberi, bilgi kartları, sınav, sık sorulan sorular, zihin haritası, zaman çizelgesi.
+- **Analiz araçları:** içerik özeti, brifing belgesi, podcast sohbeti, sesli genel bakış, karşılaştırmalı analiz, kendi talimatınızla özel hızlı araç.
+- **Kapsamlı raporlar:** çok adımlı iş akışlarıyla uzun, bölümlü ve atıflı raporlar.
+- Notlar, sonuçlar ve rapor bölümleri arasında arama; sohbetleri ve raporları Word belgesi olarak dışa aktarma.
 
-## Quick Start
+### Yönetim
+- Çok kullanıcılı kullanım; yönetici için kullanıcı oluşturma, şifre sıfırlama ve **kullanıcı istatistikleri** (proje, kaynak, depolama, mesaj, LLM kullanımı).
+- **Ayarlar → Sistem durumu:** tarih, kullanıcı ve modele göre model kullanımı; tek tıkla yedek indirme ve geri yükleme; veritabanı, vektör deposu, servisler ve son hataların anlık durumu.
+- Güvenli varsayılanlar: ilk kurulumda rastgele yönetici şifresi, kalıcı gizli anahtar, yalnızca yerel ağa açık CORS.
 
-Prerequisite: Docker Desktop on Mac / Windows, or Docker Engine + Compose on Linux.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/home.png" alt="Not defterleri ana sayfası"></td>
+    <td width="50%"><img src="docs/screenshots/settings.png" alt="Ayarlar: yapılandırmaya genel bakış"></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/system-status.png" alt="Sistem durumu: model kullanımı, yedekleme ve tanılama"></td>
+    <td width="50%"><img src="docs/screenshots/user-statistics.png" alt="Kullanıcı yönetimi ve kullanıcı istatistikleri"></td>
+  </tr>
+</table>
+
+## Kurulum
+
+**Gerekenler:** Python 3.12+ (3.13 önerilir), Node.js 20+, git. Web araması için isteğe bağlı olarak Docker (macOS'ta OrbStack veya Docker Desktop).
 
 ```bash
-git clone https://github.com/chatboxai/local-notebook.git
+git clone https://github.com/Mehmetbal2/local-notebook.git
 cd local-notebook
 
-# First build and start
-./start.sh up -d --build
+# Python ortamı ve arka uç bağımlılıkları
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
 
-# Later start / logs / stop
-./start.sh up -d
-./start.sh logs -f
-./start.sh down
+# Node.js: start.sh proje içindeki .node klasörünü kullanır
+mkdir -p .node/bin && ln -sf "$(command -v node)" .node/bin/node
+(cd frontend && npm ci)
+
+# İlk başlatma (arayüz derlenir)
+./start.sh up -d --build
 ```
 
-After startup:
+Ardından tarayıcıda **http://localhost:8080** adresini açın. Yönetici şifresi ilk açılışta oluşturulur ve `local-notebook-data/admin_password.txt` dosyasına yazılır; giriş yaptıktan sonra bu dosyayı silin.
 
-- Frontend: [http://localhost:8080](http://localhost:8080)
-- Backend API: [http://localhost:8081](http://localhost:8081), for example `curl http://localhost:8081/health`
-- Other machines on the LAN: `http://<host-ip>:8080`
+macOS'ta Finder'dan çift tıklayarak da kullanabilirsiniz:
 
-On first launch, open **Settings** and configure the LLM `api_key` / `base_url`. For non-Docker local development, see [backend/README.md](./backend/README.md) and [frontend/README.md](./frontend/README.md).
+| Dosya | Ne yapar |
+|---|---|
+| `Local-Notebook.command` | Servisleri başlatır, tarayıcıyı açar ve bir işlem menüsü gösterir |
+| `Yeniden Başlat.command` | Tüm servisleri yeniden başlatır |
 
-## First Build Can Be Slow
+Komut satırından: `./start.sh up -d` (başlat), `./start.sh restart`, `./start.sh status`, `./start.sh logs -f`, `./start.sh down` (durdur).
 
-The first `--build` usually takes 10-25 minutes. This is intentional: the project favors dependencies that can run fully locally after installation, including the vector database, document parsing, and agent framework.
+## İlk yapılandırma
 
-## Configuration
+**Ayarlar** sayfasından:
 
-Open **Settings** in the frontend to configure LLM / Embedding / OCR / FunASR. Settings take effect immediately without restarting services.
+1. **Model ayarları:** OpenAI uyumlu bir LLM sağlayıcısının adresini, modelini ve API anahtarını girin (OpenAI, DeepSeek, Anthropic veya yerel Ollama/vLLM). Görsel analiz için isteğe bağlı bir VLM ekleyebilirsiniz.
+2. **Gömme:** Varsayılan yerel servis, `local-notebook-data/models/bge-m3` klasöründeki [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) modelini kullanır ve uygulama tarafından otomatik başlatılır. Yerel servis için `services/embedding/requirements.txt` bağımlılıkları gerekir. Bunun yerine OpenAI uyumlu bir gömme API'si de seçebilirsiniz.
+3. **PDF ayrıştırma, Ses, Web arama:** OCR, konuşmayı yazıya dökme (FunASR) ve seslendirme (TTS) isteğe bağlıdır.
 
-![Settings screenshot](./docs/screenshots/setting-en.png)
+Gömme modelini değiştirdiğinizde vektörler arka planda yeni modelle yeniden oluşturulur; metinler ve özetler korunur.
 
-Recommended path: first use a cloud API such as Alibaba Cloud Bailian or another OpenAI-compatible provider to validate the workflow. Then switch components one by one to local services under [services/](./services), such as Ollama / vLLM / local Embedding / FunASR, for end-to-end offline operation.
+## Veriler
 
-> **Embedding is the exception**: changing the Embedding model changes vector dimensions and semantic space. Existing indexed vectors become invalid after switching Embedding, so projects must be deleted, files uploaded again, and indexes rebuilt. Choose the Embedding service before bulk uploads.
-
-## Web Research
-
-Web search runs on a local [SearXNG](https://github.com/searxng/searxng) instance in Docker
-(OrbStack on macOS, Docker Desktop on Windows/Linux). `./start.sh` starts it on
-`http://127.0.0.1:8888` when Docker is available; no API key is needed. See
-[services/searxng/README.md](./services/searxng/README.md).
-
-- **Chat and reports**: the `web_search` tool reads the text of the top pages (or the free PDF of a
-  scholarly hit), not only the snippets.
-- **Add source → Search the web**, with *Web* or *Academic* scope:
-  - *Quick*: results appear at once, tagged **Full text / Open access / Abstract only**; the model
-    then orders them with a one-line reason. Chosen items are imported as sources — PDFs when a
-    free copy exists (found through OpenAlex / Semantic Scholar), otherwise the page text with its
-    address and access date. Works with author and year are named "Author - Year - Title".
-  - *Deep research*: runs in the background (5–15 min). The topic is split into sub-questions,
-    20–30 sources are read in full, gaps are searched again, and a cited report is written into the
-    results panel. The sources it read can be added to the project from the report.
-    If the model fails while writing, the sources are kept and *Regenerate* only rewrites the report.
-
-## Finding Sources, Notes and Results
-
-Both side panels have a search box. Titles are filtered as you type; *Search content too* also
-searches the text of sources, notes, results and report sections, with highlighted passages.
-Matching ignores case, diacritics and apostrophes ("maverdi" finds "Mâverdî", Arabic matches with
-or without vowel marks). In the sources panel, *Select found* / *Select only these* make chat and
-generation work with just the sources you found.
-
-## Data Persistence
-
-All data is stored in `LOCAL_NOTEBOOK_DATA_DIR`, defaulting to `./local-notebook-data/`:
+Tüm veriler `LOCAL_NOTEBOOK_DATA_DIR` klasöründe durur (varsayılan `./local-notebook-data/`):
 
 ```text
-$LOCAL_NOTEBOOK_DATA_DIR/
-├── local_notebook.db
-├── local_notebook.db-wal
-├── etcd/
-├── minio/
-├── milvus/
-└── uploads/
+local-notebook-data/
+├── local_notebook.db      # SQLite (WAL): kullanıcılar, projeler, sohbetler, ayarlar
+├── milvus.db/             # Milvus Lite vektör deposu
+├── uploads/               # yüklenen kaynaklar
+├── models/                # yerel modeller (ör. bge-m3)
+├── backups/               # geri yükleme öncesi güvenlik kopyaları
+└── logs/                  # servis günlükleri
 ```
 
-Custom path:
+Yedek almak için **Ayarlar → Sistem durumu → Yedekleme ve geri yükleme** bölümünü kullanın. Ayrıntılar: [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+> [!IMPORTANT]
+> LLM API anahtarları SQLite veritabanında düz metin olarak saklanır; veri klasörünü paylaşmayın. Veri klasörünü iCloud Drive, OneDrive veya ağ diski gibi eşitlenen bir konuma koymayın; SQLite WAL dosyaları bozulabilir.
+
+## Mimari
+
+| Katman | Teknoloji |
+|---|---|
+| Arayüz | Vue 3, TypeScript, Vite ([frontend/](frontend)) |
+| Arka uç | FastAPI, SQLAlchemy, gömülü görev kuyruğu, ajan tabanlı sohbet ([backend/](backend)) |
+| Depolama | SQLite (WAL), Milvus Lite; büyük kurulumlar için Milvus sunucusu |
+| Yerel servisler | bge-m3 gömme, FunASR, SearXNG ([services/](services)) |
+
+İşletim, güvenlik varsayılanları, ortam değişkenleri ve sorun giderme için [docs/OPERATIONS.md](docs/OPERATIONS.md) belgesine bakın.
+
+## Geliştirme
 
 ```bash
-LOCAL_NOTEBOOK_DATA_DIR=/Users/foo/MyNotebook ./start.sh up
+# Arka uç testleri
+cd backend && ../.venv/bin/python -m unittest discover -s tests
+
+# Arayüz: tip denetimi ve derleme
+cd frontend && npx vue-tsc -b && npx vite build
 ```
 
-Backup: stop services and copy the whole directory with `cp -r`.
+Her push ve pull request'te testler GitHub Actions ile çalışır.
 
-## Important Notes
+## Lisans
 
-- **LLM API keys are stored in SQLite as plaintext**: never publish the data directory.
-- **Do not use a network drive**: NAS / iCloud Drive / OneDrive sync folders may corrupt SQLite WAL files.
-- **macOS / Windows performance**: Docker Desktop bind mounts can be slow for many small files; consider a named volume for large workloads.
-- **Override `SECRET_KEY` in production**: `export SECRET_KEY=$(openssl rand -hex 32)`.
-
-## Roadmap
-
-| Phase | Scope |
-|---|---|
-| **v0.1** | Local single-machine deployment, block-level citations, multimodal source panel |
-| **v0.2** | Right-side output panel, multimodal outputs, report export, image and video generation |
-| **v0.3** | Persistent memory, self-improving skill library, long-running task planning |
-| **v0.4+** | Multi-tenant isolation, SSO, audit logs, PostgreSQL + Milvus cluster templates |
-
-## License
-
-[Apache License 2.0](./LICENSE)
+[Apache License 2.0](LICENSE). Local Notebook, [chatboxai/local-notebook](https://github.com/chatboxai/local-notebook) projesi temel alınarak geliştirilmiştir; ayrıntılar [NOTICE](NOTICE) dosyasındadır.

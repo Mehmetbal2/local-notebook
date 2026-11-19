@@ -1,6 +1,4 @@
-# frontend
-
-[中文](./README.zh.md)
+# Local Notebook · frontend
 
 Vue 3 + TypeScript + Vite single-page application. In production, Nginx serves static files and proxies `/api` to the backend.
 

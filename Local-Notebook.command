@@ -6,11 +6,11 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
 # Başlık
-printf '\e]2;Local-Notebook\a'
+printf '\e]2;Local Notebook\a'
 clear
 
 echo "================================================="
-echo "        📚 Local-Notebook Başlatılıyor...        "
+echo "        📚 Local Notebook Başlatılıyor...        "
 echo "================================================="
 echo ""
 
@@ -32,7 +32,7 @@ open "http://localhost:8080"
 
 echo ""
 echo "================================================="
-echo "  ✅ Local-Notebook Başarıyla Çalışıyor!         "
+echo "  ✅ Local Notebook Başarıyla Çalışıyor!         "
 echo "  🌐 Web Arayüzü: http://localhost:8080          "
 echo "  🔌 Backend API: http://localhost:8081          "
 echo "================================================="

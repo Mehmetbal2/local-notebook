@@ -16,37 +16,37 @@ for arg in "$@"; do
       ;;
     -h|--help)
       cat <<'EOF'
-Usage: ./clean.sh [--data] [--deps]
+Kullanım: ./clean.sh [--data] [--deps]
 
-清理 local-Notebook 运行产生的中间文件。
+Local Notebook'un çalışırken ürettiği ara dosyaları temizler.
 
-Options:
-  -d, --data     除中间文件外,同时删除数据目录
-                 (LOCAL_NOTEBOOK_DATA_DIR,默认 ./local-notebook-data)
-                 包括 SQLite 数据库、向量库、上传文件、Settings 表中的
-                 LLM API key(明文)。需要输入 yes 二次确认,不可恢复。
-  --deps         同时清理 frontend/node_modules 与 frontend/dist。
-  -h, --help     显示此帮助。
+Seçenekler:
+  -d, --data     Ara dosyalara ek olarak veri klasörünü de siler
+                 (LOCAL_NOTEBOOK_DATA_DIR, varsayılan ./local-notebook-data):
+                 SQLite veritabanı, vektör deposu, yüklenen dosyalar ve Ayarlar'daki
+                 LLM API anahtarları (düz metin). "yes" yazarak onay ister; geri alınamaz.
+  --deps         frontend/node_modules ve frontend/dist klasörlerini de siler.
+  -h, --help     Bu yardımı gösterir.
 
-Examples:
-  ./clean.sh              # 只清理缓存与中间文件(安全,保留依赖与构建产物)
-  ./clean.sh --deps       # 额外清理前端 node_modules 与 dist
-  ./clean.sh --data       # 清理中间文件并删除全部数据(需确认)
+Örnekler:
+  ./clean.sh              # Yalnızca önbellek ve ara dosyalar (güvenli)
+  ./clean.sh --deps       # Ek olarak arayüz bağımlılıkları ve derleme çıktısı
+  ./clean.sh --data       # Ara dosyalar ve tüm veriler (onay ister)
 
-提示:清理前建议先 ./start.sh down 停止服务,避免占用导致删除失败。
+İpucu: Silme işlemi takılmasın diye önce ./start.sh down ile servisleri durdurun.
 EOF
       exit 0
       ;;
     *)
-      echo "Unknown option: $arg" >&2
-      echo "Run './clean.sh --help' for usage." >&2
+      echo "Bilinmeyen seçenek: $arg" >&2
+      echo "Kullanım için: ./clean.sh --help" >&2
       exit 1
       ;;
   esac
 done
 
 # ────────────────────────────────────────────────────────────────
-# 前置检查:本地服务或 docker compose 是否在运行
+# Ön kontrol: yerel servisler veya docker compose çalışıyor mu?
 # ────────────────────────────────────────────────────────────────
 SERVICES_RUNNING=false
 if ./start.sh status 2>/dev/null | grep -q "RUNNING"; then
@@ -56,28 +56,28 @@ elif command -v docker >/dev/null 2>&1 && [[ -n "$(docker compose ps -q 2>/dev/n
 fi
 
 if [[ "$SERVICES_RUNNING" == "true" ]]; then
-  echo "检测到 local-Notebook 服务正在运行。"
+  echo "Local Notebook servisleri çalışıyor."
   if [[ "$DELETE_DATA" == "true" ]]; then
-    echo "数据清理前必须先停止服务,否则可能导致 SQLite 数据损坏。"
+    echo "Veriler silinmeden önce servisler durdurulmalı; aksi hâlde SQLite veritabanı bozulabilir."
     echo ""
-    read -p "现在自动执行 ./start.sh down 停止服务?(yes 继续,其他取消整个清理): " stop_confirm
+    read -p "Servisler şimdi ./start.sh down ile durdurulsun mu? (devam için yes, iptal için başka bir şey): " stop_confirm
     if [[ "$stop_confirm" == "yes" ]]; then
       ./start.sh down
       echo ""
     else
-      echo "已取消。请手动 ./start.sh down 后再运行本脚本。"
+      echo "İptal edildi. Önce ./start.sh down çalıştırıp bu betiği tekrar başlatın."
       exit 1
     fi
   else
-    echo "(中间文件清理不影响运行中的服务,继续)"
+    echo "(Ara dosyaların temizliği çalışan servisleri etkilemez; devam ediliyor.)"
     echo ""
   fi
 fi
 
 # ────────────────────────────────────────────────────────────────
-# Part 1: 清理中间文件(默认操作,安全)
+# Bölüm 1: ara dosyalar (varsayılan, güvenli)
 # ────────────────────────────────────────────────────────────────
-echo "=== 清理运行中间文件 ==="
+echo "=== Ara dosyalar temizleniyor ==="
 
 if [[ "$DELETE_DEPS" == "true" ]]; then
   echo "  [frontend] node_modules / dist"
@@ -95,36 +95,36 @@ find backend services -type f \
 echo "  [OS]       .DS_Store / Thumbs.db"
 find . -type f \( -name ".DS_Store" -o -name "Thumbs.db" \) -delete 2>/dev/null || true
 
-echo "中间文件清理完成。"
+echo "Ara dosyalar temizlendi."
 echo ""
 
 # ────────────────────────────────────────────────────────────────
-# Part 2: 清理数据(需 --data 标志 + yes 确认)
+# Bölüm 2: veriler (--data ve "yes" onayı gerekir)
 # ────────────────────────────────────────────────────────────────
 if [[ "$DELETE_DATA" == "true" ]]; then
   DATA_DIR="${LOCAL_NOTEBOOK_DATA_DIR:-./local-notebook-data}"
 
-  echo "=== 数据清理(危险操作,不可恢复) ==="
+  echo "=== Veri silme (tehlikeli, geri alınamaz) ==="
   echo ""
-  echo "以下内容将被永久删除:"
+  echo "Aşağıdakiler kalıcı olarak silinecek:"
   echo ""
-  echo "  [主数据] $DATA_DIR"
+  echo "  [veri]   $DATA_DIR"
   if [[ -d "$DATA_DIR" ]]; then
-    echo "           - SQLite 数据库(用户账号、所有项目、所有对话历史)"
-    echo "           - 向量库(所有已索引的文档向量)"
-    echo "           - 上传的 PDF / 音频 / 笔记"
-    echo "           - Settings 中的 LLM API key 等配置(明文存储)"
+    echo "           - SQLite veritabanı (kullanıcılar, tüm projeler, tüm sohbet geçmişi)"
+    echo "           - Vektör deposu (indekslenmiş tüm belge vektörleri)"
+    echo "           - Yüklenen PDF, ses ve notlar"
+    echo "           - Ayarlar'daki LLM API anahtarları ve diğer ayarlar (düz metin)"
   else
-    echo "           (不存在,跳过)"
+    echo "           (yok, atlanıyor)"
   fi
   echo ""
   echo "  [legacy] backend/*.db / *.db-wal / *.db-shm / milvus_data.db* / uploads/"
-  echo "           (旧版本遗留路径,若存在一并删除)"
+  echo "           (eski sürümlerden kalan yollar; varsa onlar da silinir)"
   echo ""
-  echo "强烈建议先备份:"
+  echo "Önce yedek almanız önerilir:"
   echo "  cp -r \"$DATA_DIR\" \"$DATA_DIR.backup.\$(date +%Y%m%d-%H%M%S)\""
   echo ""
-  read -p "确认删除请输入 yes(任意其他输入均取消): " confirm
+  read -p "Silmek için yes yazın (başka her şey iptal eder): " confirm
 
   if [[ "$confirm" == "yes" ]]; then
     rm -rf "$DATA_DIR"
@@ -132,9 +132,9 @@ if [[ "$DELETE_DATA" == "true" ]]; then
     rm -f backend/milvus_data.db* 2>/dev/null || true
     rm -rf backend/uploads 2>/dev/null || true
     echo ""
-    echo "数据已删除。"
+    echo "Veriler silindi."
   else
     echo ""
-    echo "已取消,数据保留。"
+    echo "İptal edildi; veriler korundu."
   fi
 fi

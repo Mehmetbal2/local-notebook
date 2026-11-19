@@ -1,6 +1,4 @@
-# local-Notebook - Local Model Services
-
-[中文](./README.zh.md)
+# Local Notebook · local model services
 
 Each service runs independently and exposes an HTTP endpoint. The main backend connects to these services through the frontend Settings page, and the deployment mode can be switched at any time:
 
@@ -56,4 +54,4 @@ Endpoint: `POST http://localhost:8003/transcribe` (multipart/form-data, field=`f
 
 ## Settings Page
 
-After starting a service, enter its URL in local-Notebook frontend **Settings -> Embedding / FunASR**. Changes take effect without restarting the main backend service.
+After starting a service, enter its URL in **Settings → Embedding / Audio**. Changes take effect without restarting the main backend service.
