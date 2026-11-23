@@ -155,7 +155,7 @@ class ChatAgent:
                 yield {"type": "compact_done"}
             except Exception as e:
                 logger.exception("[compact] failed, continuing with truncated history")
-                yield {"type": "compact_failed", "message": str(e)}
+                yield {"type": "compact_failed", "message": public_error_message(e)}
 
         history.append(Message(role="user", content=question))
 
