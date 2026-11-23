@@ -19,7 +19,7 @@ from dependencies.database import get_db
 from dependencies.permissions import require_project
 from models.file import File
 from models.user import User
-from paths import get_upload_dir, to_portable_path
+from paths import get_upload_dir, safe_join, to_portable_path
 from schemas.file import FileResponse
 from services import open_access as oa
 from services import searxng_client as sx
@@ -248,11 +248,11 @@ def _base_name(page: sx.FetchedPage, fallback_title: str, meta: dict | None = No
 def _unique_path(project_dir: Path, base: str, ext: str, taken: set[str]) -> Path:
     name = f"{base}{ext}"
     n = 2
-    while name.lower() in taken or (project_dir / name).exists():
+    while name.lower() in taken or safe_join(project_dir, name).exists():
         name = f"{base} ({n}){ext}"
         n += 1
     taken.add(name.lower())
-    return project_dir / name
+    return safe_join(project_dir, name)
 
 
 def _markdown_document(page: sx.FetchedPage, title: str, url: str, info: dict | None = None) -> str:
@@ -375,7 +375,7 @@ async def import_web_sources(
 
     fetched = await asyncio.gather(*(fetch(i) for i in todo))
 
-    project_dir = get_upload_dir() / project_id
+    project_dir = safe_join(get_upload_dir(), project_id)
     project_dir.mkdir(parents=True, exist_ok=True)
     taken = {
         n.lower()

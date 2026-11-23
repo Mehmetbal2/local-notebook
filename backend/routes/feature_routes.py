@@ -250,7 +250,7 @@ async def generate_feature(
 
 _THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
 _MD_DECORATION_RE = re.compile(r"[#*_`>\[\]|]+")
-_CITATION_TOKEN_RE = re.compile(r"\[citation[_:][^\]]*\]")
+_CITATION_TOKEN_RE = re.compile(r"\[citation[_:][^\[\]]*\]")
 
 
 def _derive_note_title(markdown: str) -> str:

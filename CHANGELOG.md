@@ -2,6 +2,14 @@
 
 Bu projedeki önemli değişiklikler bu dosyada tutulur. Sürüm numaraları [Anlamsal Sürümleme](https://semver.org/lang/tr/) kuralına uyar.
 
+## [Yayımlanmadı]
+
+### Güvenlik
+- Yüklenen dosyaların, web kaynaklarının ve görsellerin yolları artık yükleme klasörünün dışına çıkamaz (`safe_join`); proje silinirken klasör yolu da aynı şekilde denetlenir.
+- Derin araştırma raporlarındaki `[S1, S2]` kaynak işaretlerini çözen düzenli ifade, özel hazırlanmış metinlerde üstel sürede çalışabiliyordu; düzeltildi. Not başlığı ve markdown blok (başlık, liste, tablo) desenleri de geri izlemeye kapalı hale getirildi.
+- Oluşturulan yönetici parolası hiçbir durumda günlüğe yazılmaz; parola dosyası yazılamazsa uygulama değişikliği kaydetmeden, açıklayıcı bir hatayla durur.
+- Sohbet ve bağlantı testi hataları kullanıcıya hatanın türüyle (zaman aşımı, bağlantı, API anahtarı, kota, bağlam penceresi…) bildirilir; ayrıntılar yalnızca sunucu günlüğünde kalır. Kimlik doğrulamasız `/health/redis` uç noktası hata metni döndürmez.
+
 ## [1.0.0] - 2026-11-19
 
 Local Notebook'un ilk kararlı sürümü: bilgisayarınızda çalışan, yanıtlarını paragraf düzeyinde kaynağına bağlayan bir araştırma not defteri.

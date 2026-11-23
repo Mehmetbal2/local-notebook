@@ -15,6 +15,7 @@ from models.message import Message
 from models.session import Session
 from models.user import User
 from schemas.chat import ChatRequest, EditMessageRequest
+from utils.errors import public_error_message
 from utils.i18n import msg as ui_msg
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -132,16 +133,17 @@ async def _agent_sse(
     except Exception as e:
         completed = True
         logger.exception("ChatAgent stream error")
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        public_message = public_error_message(e)
+        yield f"data: {json.dumps({'type': 'error', 'message': public_message}, ensure_ascii=False)}\n\n"
 
         try:
             error_msg = Message(
                 session_id=session.id,
                 role="assistant",
-                content=f"Generation failed: {str(e)}",
+                content=f"Generation failed: {public_message}",
                 started_at=started_at,
                 finished_at=datetime.now(timezone.utc),
-                _error=str(e),
+                _error=public_message,
             )
             db.add(error_msg)
             await db.commit()

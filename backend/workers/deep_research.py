@@ -247,7 +247,7 @@ async def _gather_round(
     return added
 
 
-_SOURCE_REF_RE = re.compile(r"\[(S\s*\d+(?:\s*[,;]\s*S?\s*\d+)*)\]", re.IGNORECASE)
+_SOURCE_REF_RE = re.compile(r"\[(S\s*\d+(?:\s*[,;]\s*(?:S\s*)?\d+)*)\]", re.IGNORECASE)
 
 
 def _to_citation_markers(markdown: str, max_n: int) -> str:

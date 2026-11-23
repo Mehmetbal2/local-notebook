@@ -26,6 +26,7 @@ from kosong.tooling import ToolResult
 from kosong.tooling.simple import SimpleToolset
 from services.llm_provider import create_llm_chat_provider
 from services.usage_service import record_model_usage
+from utils.errors import public_error_message
 from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger("chat_agent")
@@ -260,7 +261,8 @@ class ChatAgent:
                     last_total_tokens = step_result.usage.total
 
             except ChatProviderError as e:
-                yield {"type": "error", "message": str(e)}
+                logger.warning("ChatAgent provider error: %s", e)
+                yield {"type": "error", "message": public_error_message(e)}
                 return
             except asyncio.CancelledError:
                 step_task.cancel()
@@ -268,7 +270,7 @@ class ChatAgent:
                 return
             except Exception as e:
                 logger.exception("ChatAgent error")
-                yield {"type": "error", "message": str(e)}
+                yield {"type": "error", "message": public_error_message(e)}
                 return
 
             if step_result.tool_calls and not is_final:

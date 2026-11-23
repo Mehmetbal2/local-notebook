@@ -15,7 +15,7 @@ from dependencies.permissions import require_project
 from models.file import File
 from models.project import Project
 from models.user import User
-from paths import get_upload_dir
+from paths import get_upload_dir, safe_join
 from schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,13 @@ async def _drop_project_vectors(project_id: str) -> None:
 
 
 async def _delete_project_upload_dir(project_id: str) -> None:
-    project_dir = UPLOAD_DIR / project_id
+    try:
+        project_dir = safe_join(UPLOAD_DIR, project_id)
+    except ValueError:
+        logger.warning("Refusing to delete an upload dir outside the upload root: %r", project_id)
+        return
+    if project_dir == Path(os.path.realpath(UPLOAD_DIR)):
+        return
     try:
         await asyncio.to_thread(shutil.rmtree, project_dir, ignore_errors=True)
     except Exception as exc:

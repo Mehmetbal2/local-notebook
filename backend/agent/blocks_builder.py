@@ -11,11 +11,28 @@ from typing import Any, Dict, List, Tuple
 
 from agent.citation_parser import CitationParser
 
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
-_LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
+# The patterns avoid two adjacent repeats that can match the same characters
+# (e.g. `\s+(.*)`), so a long run of spaces cannot make them backtrack; the
+# captured text is stripped afterwards.
+_HEADING_RE = re.compile(r"^(#{1,6})\s(.*)$")
+_LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s(.*)$")
 _QUOTE_RE = re.compile(r"^\s*>\s?(.*)$")
-_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
-_TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{2,}.*$")
+
+
+def _is_table_row(line: str) -> bool:
+    """`| … |` with optional surrounding whitespace."""
+    s = line.strip()
+    return len(s) >= 2 and s[0] == "|" and s[-1] == "|"
+
+
+def _is_table_separator(line: str) -> bool:
+    """A markdown table separator row such as `|---|:--:|` or `--- | ---`."""
+    s = line.lstrip()
+    if s.startswith("|"):
+        s = s[1:].lstrip()
+    if s.startswith(":"):
+        s = s[1:]
+    return s.startswith("--")
 
 
 def _text_to_parts(parser: CitationParser, text: str) -> List[Dict[str, Any]]:
@@ -109,11 +126,11 @@ def markdown_to_blocks(
             continue
 
         # table: consecutive | … | rows (including the separator row); raw markdown is stored in content
-        if _TABLE_ROW_RE.match(line) and i + 1 < n and _TABLE_SEP_RE.match(lines[i + 1]):
+        if _is_table_row(line) and i + 1 < n and _is_table_separator(lines[i + 1]):
             flush_para()
             table_lines = [line]
             i += 1
-            while i < n and _TABLE_ROW_RE.match(lines[i]):
+            while i < n and _is_table_row(lines[i]):
                 table_lines.append(lines[i])
                 i += 1
             raw_table = "\n".join(table_lines)

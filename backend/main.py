@@ -88,6 +88,12 @@ def _write_admin_password_file(password: str) -> str | None:
         return None
 
 
+_ADMIN_PASSWORD_FILE_ERROR = (
+    "Could not write the generated admin password to the data folder. "
+    "Make the data folder writable, or set a strong ADMIN_PASSWORD in the environment, then start again."
+)
+
+
 async def _ensure_admin_user(db) -> None:
     """Create the admin account without ever leaving the known default password in place."""
     from sqlalchemy import select
@@ -109,15 +115,15 @@ async def _ensure_admin_user(db) -> None:
         if generated:
             password = _generate_admin_password()
             path = _write_admin_password_file(password)
-            if path:
-                logger.warning(
-                    "Created the initial admin user '%s' with a generated password. "
-                    "Read it from %s and delete that file after signing in.",
-                    admin_username,
-                    path,
-                )
-            else:
-                logger.warning("Generated admin password for '%s': %s", admin_username, password)
+            if not path:
+                # The password is never written to the log; without the file nobody could sign in.
+                raise RuntimeError(_ADMIN_PASSWORD_FILE_ERROR)
+            logger.warning(
+                "Created the initial admin user '%s' with a generated password. "
+                "Read it from %s and delete that file after signing in.",
+                admin_username,
+                path,
+            )
         admin_user = User(
             username=admin_username,
             password_hash=hash_password(password),
@@ -135,23 +141,24 @@ async def _ensure_admin_user(db) -> None:
         logger.info("Initial admin user is ready: %s", admin_username)
 
     if verify_password("admin", admin_user.password_hash):
+        path = None
         if env_is_insecure:
             password = _generate_admin_password()
+            # Written before the change is saved, so a failure leaves nobody locked out.
+            path = _write_admin_password_file(password)
+            if not path:
+                raise RuntimeError(_ADMIN_PASSWORD_FILE_ERROR)
         else:
             # An explicit strong ADMIN_PASSWORD in the environment wins over a random one.
             password = env_password
         admin_user.password_hash = hash_password(password)
         await db.commit()
-        if env_is_insecure:
-            path = _write_admin_password_file(password)
-            if path:
-                logger.warning(
-                    "The admin account still used the default password 'admin'; it has been rotated. "
-                    "Read the new password from %s and delete that file after signing in.",
-                    path,
-                )
-            else:
-                logger.warning("Rotated admin password for '%s': %s", admin_username, password)
+        if path:
+            logger.warning(
+                "The admin account still used the default password 'admin'; it has been rotated. "
+                "Read the new password from %s and delete that file after signing in.",
+                path,
+            )
         else:
             logger.warning(
                 "The admin account still used the default password 'admin'; it now uses ADMIN_PASSWORD "
@@ -420,8 +427,9 @@ def create_app() -> FastAPI:
         try:
             await app.state.redis.ping()
             return {"status": "ok"}
-        except Exception as exc:
-            return {"status": "error", "detail": str(exc)}
+        except Exception:
+            logger.warning("Redis health check failed", exc_info=True)
+            return {"status": "error"}
 
     return app
 

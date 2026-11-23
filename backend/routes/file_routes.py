@@ -17,7 +17,7 @@ from dependencies.permissions import require_file, require_project
 from models.file import File
 from models.project import Project
 from models.user import User
-from paths import get_upload_dir, resolve_stored_path, to_portable_path
+from paths import get_upload_dir, resolve_stored_path, safe_join, to_portable_path
 from schemas.file import FileResponse
 from utils.text_decoding import looks_like_binary
 from utils.i18n import msg as ui_msg
@@ -251,9 +251,15 @@ async def upload_file(
                 detail="The file contains binary data and cannot be parsed as text.",
             )
 
-    project_dir = UPLOAD_DIR / project_id
+    try:
+        project_dir = safe_join(UPLOAD_DIR, project_id)
+        dest = safe_join(project_dir, clean_filename)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid file name.",
+        )
     project_dir.mkdir(parents=True, exist_ok=True)
-    dest = project_dir / clean_filename
 
     file_size = 0
     async with aiofiles.open(dest, "wb") as f:
@@ -905,7 +911,10 @@ async def preview_embedded_image(
         raise HTTPException(status_code=400, detail="Invalid image index")
 
     db_file = await _get_file_or_404(db, file_id, current_user)
-    image_dir = _resolve_db_file_path(db_file).parent / "images" / file_id
+    try:
+        image_dir = safe_join(_resolve_db_file_path(db_file).parent, "images", file_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Images not found")
     if not image_dir.is_dir():
         raise HTTPException(status_code=404, detail="Images not found")
 
@@ -948,8 +957,10 @@ async def preview_embedded_image(
     if not image_name:
         raise HTTPException(status_code=404, detail="Image metadata missing")
 
-    safe_name = Path(str(image_name)).name
-    image_path = image_dir / safe_name
+    try:
+        image_path = safe_join(image_dir, Path(str(image_name)).name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Image file not found")
     if not image_path.is_file() or image_path.suffix.lower().lstrip(".") not in allowed_extensions:
         raise HTTPException(status_code=404, detail="Image file not found")
 

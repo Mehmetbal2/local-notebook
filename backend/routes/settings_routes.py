@@ -20,6 +20,7 @@ from kosong.message import Message
 from models.user import User
 from services.llm_provider import create_llm_chat_provider, normalize_llm_api_format
 from services.usage_service import record_model_usage
+from utils.errors import public_error_message
 from utils.i18n import msg as ui_msg
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -289,6 +290,12 @@ class EmbeddingTestRequest(BaseModel):
     base_url: str | None = None
 
 
+def _test_error(exc: BaseException) -> str:
+    """Connection-test failure text: the kind of error, with the details only in the log."""
+    logger.warning("Connection test failed: %s", exc, exc_info=True)
+    return ui_msg("test_failed", reason=public_error_message(exc))
+
+
 async def _mark_verified(key: str, ok: bool, db: AsyncSession) -> None:
     try:
         await config.set_setting(key, "true" if ok else "false", db)
@@ -321,7 +328,7 @@ async def _test_chat_completions(
         return {"ok": False, "msg": ui_msg("cannot_connect")}
     except Exception as exc:
         await _mark_verified(verified_key, False, db)
-        return {"ok": False, "msg": str(exc)}
+        return {"ok": False, "msg": _test_error(exc)}
 
 
 async def _test_llm_provider(
@@ -353,10 +360,10 @@ async def _test_llm_provider(
         return {"ok": True, "msg": ui_msg("conn_ok"), "verified": True}
     except ChatProviderError as exc:
         await _mark_verified(verified_key, False, db)
-        return {"ok": False, "msg": str(exc)}
+        return {"ok": False, "msg": _test_error(exc)}
     except Exception as exc:
         await _mark_verified(verified_key, False, db)
-        return {"ok": False, "msg": str(exc)}
+        return {"ok": False, "msg": _test_error(exc)}
 
 
 def _require_chat_params(
@@ -471,7 +478,7 @@ async def test_ocr(
         return result
     except Exception as exc:
         await _mark_verified("ocr_verified", False, db)
-        return {"ok": False, "msg": str(exc)}
+        return {"ok": False, "msg": _test_error(exc)}
 
 
 class FunASRTestRequest(BaseModel):
@@ -689,7 +696,7 @@ async def test_embedding(
         return {"ok": False, "msg": ui_msg("cannot_connect_url", url=base_url)}
     except Exception as exc:
         await _mark_verified("embedding_verified", False, db)
-        return {"ok": False, "msg": str(exc)}
+        return {"ok": False, "msg": _test_error(exc)}
 
 
 class WebSearchTestRequest(BaseModel):

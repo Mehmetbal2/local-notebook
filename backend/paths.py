@@ -12,6 +12,19 @@ def _resolve_from_root(raw_path: str | Path) -> Path:
     return (PROJECT_ROOT / path).resolve()
 
 
+def safe_join(base: str | Path, *parts: str) -> Path:
+    """Join untrusted path parts (an id, a file name) under `base`.
+
+    Raises ValueError when the result would land outside `base`, e.g. through
+    `..`, an absolute part or a symlink.
+    """
+    root = os.path.realpath(base)
+    candidate = os.path.realpath(os.path.join(root, *[str(p) for p in parts]))
+    if candidate != root and not candidate.startswith(root + os.sep):
+        raise ValueError("path escapes its base directory")
+    return Path(candidate)
+
+
 def get_data_dir() -> Path:
     raw = os.getenv("LOCAL_NOTEBOOK_DATA_DIR", "").strip()
     if raw:
