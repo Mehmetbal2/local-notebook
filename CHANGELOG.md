@@ -8,6 +8,13 @@ Bu projedeki önemli değişiklikler bu dosyada tutulur. Sürüm numaraları [An
 - Yüklenen dosyaların, web kaynaklarının ve görsellerin yolları artık yükleme klasörünün dışına çıkamaz (`safe_join`); proje silinirken klasör yolu da aynı şekilde denetlenir.
 - Derin araştırma raporlarındaki `[S1, S2]` kaynak işaretlerini çözen düzenli ifade, özel hazırlanmış metinlerde üstel sürede çalışabiliyordu; düzeltildi. Not başlığı ve markdown blok (başlık, liste, tablo) desenleri de geri izlemeye kapalı hale getirildi.
 - Oluşturulan yönetici parolası hiçbir durumda günlüğe yazılmaz; parola dosyası yazılamazsa uygulama değişikliği kaydetmeden, açıklayıcı bir hatayla durur.
+- Şifre değiştirildiğinde ya da yönetici sıfırladığında kullanıcının eski oturumları (erişim ve yenileme anahtarları) anında geçersiz olur. Bu sürüme geçince herkesin bir kez yeniden giriş yapması gerekir.
+- Web kaynağı içe aktarma ve web araması artık yalnızca genel internetteki adresleri indirir; yerel ağ, sunucunun kendisi ve bulut meta veri adresleri (yönlendirmeler dahil) engellenir. Güvenilir tek kullanıcılı kurulumda `WEB_FETCH_ALLOW_PRIVATE=1` ile açılabilir.
+- Dosya yüklemelerinde oturum ve boyut sınırı (`MAX_UPLOAD_MB`, varsayılan 500 MB) gövde okunmadan denetlenir; oturum açmamış biri sunucu diskini dolduramaz.
+- Açıldığında aşırı büyüyen EPUB/DOCX dosyaları ("zip bombası") işlenmez (`ARCHIVE_MAX_UNCOMPRESSED_MB`, varsayılan 512 MB).
+- DOCX dışa aktarımında markdown görsel bağlantıları artık sunucudaki dosyaları belgeye gömemez.
+- `[citation_0-citation_999999999]` gibi dev atıf aralıkları açılmaz; bellek tükenmesi önlendi.
+- Docker Compose: Redis ve Milvus yalnızca `127.0.0.1` üzerinden yayınlanır (parolasız Redis üzerinden kod çalıştırma ve Milvus'a doğrudan erişim engellendi).
 - Sohbet ve bağlantı testi hataları kullanıcıya hatanın türüyle (zaman aşımı, bağlantı, API anahtarı, kota, bağlam penceresi…) bildirilir; ayrıntılar yalnızca sunucu günlüğünde kalır. Kimlik doğrulamasız `/health/redis` uç noktası hata metni döndürmez.
 
 ## [1.0.0] - 2026-11-19

@@ -2,7 +2,7 @@ import asyncio
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import BaseParser, Block, ParseResult
+from .base import BaseParser, Block, ParseResult, check_zip_archive
 from utils.i18n import msg as ui_msg
 
 
@@ -34,6 +34,7 @@ class EpubParser(BaseParser):
         import ebooklib
         from ebooklib import epub
 
+        check_zip_archive(file_path)
         try:
             book = epub.read_epub(file_path)
         except Exception as exc:  # damaged file / invalid zip / missing OPF

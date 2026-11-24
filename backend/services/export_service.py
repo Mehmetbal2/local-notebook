@@ -929,7 +929,10 @@ class ExportService:
         docx_path = md_path.replace('.md', '.docx')
 
         try:
-            extra_args = ['--standalone']
+            # Images are dropped before pandoc writes the DOCX. Otherwise a Markdown image such
+            # as ![](/etc/passwd) in a chat answer or session title would make pandoc embed any
+            # file the backend can read. Exports never embed images (they become captions).
+            extra_args = ['--standalone', '--lua-filter=' + self._no_local_files_filter()]
             if self._has_reference_docx():
                 extra_args.append('--reference-doc=' + self._get_reference_docx())
 
@@ -1607,6 +1610,10 @@ class ExportService:
             pass
 
         doc.save(docx_path)
+
+    @staticmethod
+    def _no_local_files_filter() -> str:
+        return os.path.join(os.path.dirname(__file__), '..', 'templates', 'no_local_files.lua')
 
     def _has_reference_docx(self) -> bool:
         return os.path.exists(self._get_reference_docx())

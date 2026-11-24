@@ -6,8 +6,11 @@ JSON API: GET {base_url}/search?q=...&format=json.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import os
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -49,7 +52,7 @@ FRESHNESS_TO_TIME_RANGE = {
 
 class SearxngError(Exception):
     """A SearXNG request failed. `code` is one of: unreachable, json_disabled,
-    rate_limited, timeout, http."""
+    rate_limited, timeout, http, blocked (a page address that is not public)."""
 
     def __init__(self, code: str, message: str = "", status: int | None = None):
         super().__init__(message or code)
@@ -399,6 +402,46 @@ async def _download(client: httpx.AsyncClient, url: str, limit: int) -> tuple[ht
         return resp, b"".join(chunks)
 
 
+# Pages are fetched on behalf of users (web source import, web search, deep research),
+# so a URL must not reach services that only the server can see: loopback,
+# private networks, link-local addresses such as the cloud metadata endpoint
+# 169.254.169.254, and other non-public ranges. Every hop of a redirect is checked.
+# Set WEB_FETCH_ALLOW_PRIVATE=1 to allow intranet pages on a trusted single-user install.
+WEB_FETCH_ALLOW_PRIVATE = (os.getenv("WEB_FETCH_ALLOW_PRIVATE") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return ip.is_global and not ip.is_multicast
+
+
+async def check_public_destination(url: str) -> None:
+    """Raise SearxngError("blocked") unless the URL is http(s) and resolves only to public addresses."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise SearxngError("blocked", "only http and https addresses can be fetched")
+    if WEB_FETCH_ALLOW_PRIVATE:
+        return
+    host = parsed.hostname
+    try:
+        addresses = {ipaddress.ip_address(host)}
+    except ValueError:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise SearxngError("http", f"could not resolve {host}") from exc
+        addresses = {ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos}
+    if not addresses or not all(_is_public_ip(ip) for ip in addresses):
+        raise SearxngError("blocked", f"{host} is not a public internet address")
+
+
+async def _check_request_destination(request: httpx.Request) -> None:
+    await check_public_destination(str(request.url))
+
+
 def _looks_like_pdf(content_type: str, body: bytes) -> bool:
     return "application/pdf" in content_type or body[:5] == b"%PDF-"
 
@@ -414,7 +457,12 @@ async def fetch_page(url: str, *, timeout: float = 15.0, follow_pdf: bool = Fals
         "Accept": "text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8",
         "Accept-Language": "tr,en;q=0.8,*;q=0.5",
     }
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=True,
+        headers=headers,
+        event_hooks={"request": [_check_request_destination]},
+    ) as client:
         resp, body = await _download(client, url, MAX_PDF_BYTES)
         content_type = (resp.headers.get("content-type") or "").lower()
         final_url = str(resp.url)

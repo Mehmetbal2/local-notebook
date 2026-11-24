@@ -3,7 +3,9 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"           # exposed to the host for a backend run outside Docker
+      # Bound to 127.0.0.1 only: Redis has no password here and the worker runs the jobs
+      # it finds in it, so it must never be reachable from the network.
+      - "127.0.0.1:6379:6379"  # for a backend run outside Docker on this machine
 
   # ── Milvus standalone (official three-container setup) ──────────────
   etcd:
@@ -48,7 +50,8 @@ services:
     volumes:
       - ${LOCAL_NOTEBOOK_DATA_DIR:-./local-notebook-data}/milvus:/var/lib/milvus
     ports:
-      - "19530:19530"         # exposed to the host for a backend run outside Docker
+      # Bound to 127.0.0.1 only: Milvus has no authentication here and holds every user's vectors.
+      - "127.0.0.1:19530:19530"  # for a backend run outside Docker on this machine
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s

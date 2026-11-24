@@ -89,12 +89,17 @@ class CitationParser:
                 return True
         return False
 
+    # A real answer never cites more than a few dozen neighbouring paragraphs in one
+    # range; anything wider is kept as two literal endpoints instead of being expanded
+    # (a range like citation_0-citation_999999999 would otherwise allocate a huge list).
+    MAX_RANGE_SIZE = 200
+
     def _expand_range(self, start_token: str, end_token: str) -> list[str]:
         """Expand citation ranges while keeping malformed mixed ranges literal."""
         if start_token.isdigit() and end_token.isdigit():
             start = int(start_token)
             end = int(end_token)
-            if end >= start:
+            if 0 <= end - start < self.MAX_RANGE_SIZE:
                 return [f"citation_{num}" for num in range(start, end + 1)]
 
         start_prefix, _, start_num = start_token.rpartition("_")
@@ -104,7 +109,7 @@ class CitationParser:
             and start_prefix == end_prefix
             and start_num.isdigit()
             and end_num.isdigit()
-            and int(end_num) >= int(start_num)
+            and 0 <= int(end_num) - int(start_num) < self.MAX_RANGE_SIZE
         ):
             return [
                 f"citation_{start_prefix}_{num}"

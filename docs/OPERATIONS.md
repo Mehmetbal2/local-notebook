@@ -112,6 +112,9 @@ the vectors; in server mode it does not.
 | `BACKUP_KEEP_PRE_RESTORE` | `3` | Pre-restore safety copies kept |
 | `BACKUP_DOWNLOAD_TTL_SECONDS` | `900` | Lifetime of a prepared backup's one-time link |
 | `USAGE_TIMEZONE` | system time zone | Time zone used to date model usage (was fixed to Asia/Shanghai) |
+| `MAX_UPLOAD_MB` | `500` | Largest multipart upload; multipart requests also need a valid token before their body is read. Backup restores are exempt from the size limit |
+| `ARCHIVE_MAX_UNCOMPRESSED_MB` | `512` | Largest unpacked size of an EPUB/DOCX (zip bomb guard) |
+| `WEB_FETCH_ALLOW_PRIVATE` | off | Set to `1` to let web-source import and web search read pages on loopback/private/link-local addresses (intranet). Off by default so users cannot reach server-internal services |
 | `SQLITE_JOURNAL_MODE` | `WAL` | SQLite journal mode |
 | `RESTORE_MAX_ARCHIVE_BYTES` | `4294967296` (4 GiB) | Upload size limit for a restore archive |
 | `RESTORE_MAX_UNCOMPRESSED_BYTES` | `8589934592` (8 GiB) | Zip-bomb guard for a restore |

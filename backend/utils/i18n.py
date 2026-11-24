@@ -88,6 +88,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "websource_unsupported": {"tr": "Desteklenmeyen içerik türü", "en": "Unsupported content type", "zh": "不支持的内容类型"},
     "websource_http_error": {"tr": "Site hata döndürdü (HTTP {status})", "en": "The site returned an error (HTTP {status})", "zh": "网站返回错误（HTTP {status}）"},
     "websource_timeout": {"tr": "Site zamanında yanıt vermedi", "en": "The site did not respond in time", "zh": "网站响应超时"},
+    "websource_blocked": {"tr": "Bu adres genel internette değil (yerel ağ ya da sunucunun kendisi); güvenlik nedeniyle indirilmedi.", "en": "This address is not on the public internet (a local network or the server itself), so it was not downloaded for safety.", "zh": "该地址不在公共互联网上（本地网络或服务器本身），出于安全考虑未下载。"},
     "websource_fetch_failed": {"tr": "Sayfa indirilemedi", "en": "The page could not be downloaded", "zh": "无法下载页面"},
     "research_queued": {"tr": "Sırada bekliyor…", "en": "Queued…", "zh": "排队中…"},
     "research_planning": {"tr": "Konu alt sorulara bölünüyor…", "en": "Breaking the topic into sub-questions…", "zh": "正在拆分子问题…"},
@@ -200,6 +201,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh": "本地 PDF 解析需要 PyMuPDF。请在虚拟环境中运行 `pip install pymupdf`，或在「设置 → PDF 解析」中选择 OCR 服务。",
     },
     # ---- EPUB ----
+    "archive_too_large": {"tr": "Belge açıldığında çok büyük bir boyuta ulaşıyor ({size} MB, {count} parça; sınır {limit} MB). Güvenlik nedeniyle işlenmedi.", "en": "The document expands to an unreasonable size when unpacked ({size} MB, {count} parts; limit {limit} MB). It was not processed for safety.", "zh": "该文档解压后体积过大（{size} MB，{count} 个部分；上限 {limit} MB），出于安全考虑未处理。"},
     "epub_corrupt": {"tr": "EPUB ayrıştırılamadı; dosya bozuk ya da biçimi standart dışı olabilir: {error}", "en": "The EPUB could not be parsed; the file may be damaged or malformed: {error}", "zh": "EPUB 解析失败,文件可能损坏或格式不规范: {error}"},
     "epub_no_text": {
         "tr": "EPUB'dan metin çıkarılamadı. Dosya şifreli (DRM), sabit düzenli ya da görsel tabanlı olabilir; bu türler henüz desteklenmiyor.",

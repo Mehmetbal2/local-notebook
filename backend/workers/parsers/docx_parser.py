@@ -2,7 +2,7 @@ import asyncio
 import re
 from typing import List
 
-from .base import BaseParser, Block, ParseResult
+from .base import BaseParser, Block, ParseResult, check_zip_archive
 
 
 class DocxParser(BaseParser):
@@ -17,6 +17,7 @@ class DocxParser(BaseParser):
     def _parse_sync(self, file_path: str) -> ParseResult:
         import docx
 
+        check_zip_archive(file_path)
         doc = docx.Document(file_path)
 
         paragraphs = []

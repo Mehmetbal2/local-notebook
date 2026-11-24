@@ -334,6 +334,8 @@ async def _fetch_source(item: WebSourceItem) -> tuple[sx.FetchedPage, dict]:
 def _fetch_error_reason(exc: Exception) -> str:
     text = str(exc)
     if isinstance(exc, sx.SearxngError):
+        if exc.code == "blocked":
+            return ui_msg("websource_blocked")
         if "too large" in text:
             return ui_msg("websource_too_large")
         if "unsupported content type" in text:

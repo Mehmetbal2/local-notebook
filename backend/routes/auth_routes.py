@@ -7,6 +7,8 @@ from dependencies.auth import (
     create_access_token,
     decode_token,
     get_current_user,
+    token_matches_user,
+    token_payload_for,
     verify_password,
 )
 from dependencies.database import get_db
@@ -53,7 +55,7 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token_payload = {"sub": user.id, "username": user.username, "role": user.role}
+    token_payload = token_payload_for(user)
     token = create_access_token(token_payload)
     refresh = create_access_token(token_payload, refresh=True)
     return {
@@ -89,10 +91,10 @@ async def refresh_token(
         raise HTTPException(status_code=401, detail="Invalid token")
 
     user = await db.get(User, payload["sub"])
-    if not user:
+    if not user or not token_matches_user(payload, user):
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    token_payload = {"sub": user.id, "username": user.username, "role": user.role}
+    token_payload = token_payload_for(user)
     token = create_access_token(token_payload)
     refresh = create_access_token(token_payload, refresh=True)
     return {

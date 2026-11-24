@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -100,6 +102,32 @@ def create_access_token(
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def password_fingerprint(password_hash: str) -> str:
+    """A keyed fingerprint of the stored password hash, carried in every token.
+
+    When a password is changed or reset the fingerprint changes, so every
+    access and refresh token issued before that stops working at once.
+    """
+    digest = hmac.new(SECRET_KEY.encode("utf-8"), (password_hash or "").encode("utf-8"), hashlib.sha256)
+    return digest.hexdigest()[:24]
+
+
+def token_payload_for(user: User) -> dict:
+    return {
+        "sub": user.id,
+        "username": user.username,
+        "role": user.role,
+        "pwv": password_fingerprint(user.password_hash),
+    }
+
+
+def token_matches_user(payload: dict, user: User) -> bool:
+    claim = payload.get("pwv")
+    if not isinstance(claim, str):
+        return False
+    return hmac.compare_digest(claim, password_fingerprint(user.password_hash))
+
+
 def decode_token(token: str, expected_type: str = "access") -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -119,7 +147,7 @@ async def _get_user_from_token(
 ) -> User:
     payload = decode_token(token, expected_type=expected_type)
     user = await db.get(User, payload["sub"])
-    if not user:
+    if not user or not token_matches_user(payload, user):
         raise _credentials_exc
     return user
 

@@ -384,6 +384,9 @@ def create_app() -> FastAPI:
     ]
     if extra_origins:
         cors_kwargs["allow_origins"] = extra_origins
+    # Inside CORS so its 401/413 answers still carry CORS headers.
+    from utils.upload_guard import UploadGuardMiddleware
+    app.add_middleware(UploadGuardMiddleware)
     app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     app.add_middleware(UILanguageMiddleware)
