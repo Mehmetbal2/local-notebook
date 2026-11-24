@@ -26,6 +26,7 @@ Bu projedeki önemli değişiklikler bu dosyada tutulur. Sürüm numaraları [An
 - `start.sh` API'yi yalnızca bu bilgisayarda dinletir (`BACKEND_HOST`); yerel gömme ve ses servisleri de varsayılan olarak `127.0.0.1` üzerinde çalışır ve istek boyutlarını sınırlar.
 - Giriş deneme sınırı aynı anda gönderilen isteklerle aşılamaz; Docker'daki nginx istemcinin gönderdiği `X-Forwarded-For` başlığını yok sayar (sahte adreslerle sınır atlatılamaz).
 - Model yanıtlarındaki görseller ve stiller başka sitelerden içerik yükleyemez (CSS kaçış karakterleriyle gizlenmiş adresler dahil); yönlendirilmiş bir yanıt kaynak metnini görsel adresiyle dışarı sızdıramaz.
+- PDF'lerde aynı görsel çok sayıda sayfada kullanılsa da diske bir kez yazılır; belge başına görsel sayısı (1000) ve toplam boyut (500 MB) sınırlandı. Web atıf ipuçlarındaki simgeler ve bağlantı stilleri de başka sitelerden içerik yükleyemez.
 - HTML belgelerinde aynı yerel görselin tekrar tekrar kopyalanması ve görsel sayısı/boyutu sınırlandı; düz metinde kapanmayan `<table>` etiketleri artık işlemeyi yavaşlatmaz.
 - Yerel gömme ve ses servislerinden CORS kaldırıldı ve tarayıcıdan gelen istekler (Origin başlığı taşıyanlar) reddedilir; bir web sayfası bu servisleri kullanamaz. Gömme servisi yalnızca JSON kabul eder. Gömme servisi büyük istekleri okumadan reddeder ve aynı anda tek hesaplama yapar.
 - Veri klasörü (`local-notebook-data`) yalnızca sahibinin erişebileceği izinlerle (700) tutulur.

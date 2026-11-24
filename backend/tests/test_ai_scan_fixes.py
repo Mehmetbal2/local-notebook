@@ -171,6 +171,35 @@ class HtmlImageLimitTests(unittest.TestCase):
         self.assertEqual(len(written), 1)
 
 
+class PdfImageLimitTests(unittest.TestCase):
+    def test_image_reused_on_many_pages_is_written_once(self):
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF is not installed")
+        from workers.parsers.pymupdf_parser import PyMuPDFParser
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 300, 300), False)
+        pix.set_rect(pix.irect, (200, 50, 50))
+        pix.save(str(tmp / "i.png"))
+        doc = pymupdf.open()
+        xref = None
+        for i in range(40):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"Sayfa {i}")
+            rect = pymupdf.Rect(72, 100, 372, 400)
+            if xref is None:
+                xref = page.insert_image(rect, filename=str(tmp / "i.png"))
+            else:
+                page.insert_image(rect, xref=xref)
+        doc.save(str(tmp / "d.pdf"))
+        result = PyMuPDFParser(image_dir=tmp / "imgs").parse(str(tmp / "d.pdf"))
+        self.assertEqual(len(result.images), 40)
+        self.assertEqual(len(list((tmp / "imgs").glob("*.png"))), 1)
+
+
 class EpubSpineTests(unittest.TestCase):
     def test_repeated_spine_entries_are_read_once(self):
         from workers.parsers.epub_parser import EpubParser

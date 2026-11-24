@@ -27,6 +27,11 @@ _PAGE_NUMBER_RE = re.compile(r"^\s*(?:[-–—]?\s*\d{1,4}\s*[-–—]?|[ivxlcIV
 _HYPHEN_END_RE = re.compile(r"(\w)[-‐‑]$")
 _MIN_IMAGE_SIDE = 48
 _MIN_IMAGE_AREA_RATIO = 0.004  # of the page area; filters bullets, rules, logos in headers
+# Document-wide limits: a small PDF can place one large image on thousands of pages.
+# Each distinct image is written once, and the total is capped so a single upload
+# cannot fill the disk.
+_MAX_IMAGES_PER_DOCUMENT = 1000
+_MAX_IMAGE_BYTES_PER_DOCUMENT = 500 * 1024 * 1024
 _MIN_TEXT_CHARS_PER_PAGE = 40  # below this on average the PDF is treated as scanned
 
 
@@ -123,6 +128,8 @@ class PyMuPDFParser:
         pymupdf = _import_pymupdf()
         blocks: List[Block] = []
         images: List[Dict[str, Any]] = []
+        self._saved_xrefs: Dict[int, Tuple[str, str]] = {}
+        self._saved_image_bytes = 0
         position = 0
 
         with pymupdf.open(file_path) as doc:
@@ -443,23 +450,37 @@ class PyMuPDFParser:
             if (x1 - x0) * (y1 - y0) < page_area * _MIN_IMAGE_AREA_RATIO:
                 continue
             seen_xrefs.add(xref)
-            try:
-                pymupdf = _import_pymupdf()
-                pix = pymupdf.Pixmap(doc, xref)
-                if pix.n - pix.alpha >= 4:  # CMYK -> RGB
-                    pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-                if pix.width < _MIN_IMAGE_SIDE or pix.height < _MIN_IMAGE_SIDE:
+            if len(images) >= _MAX_IMAGES_PER_DOCUMENT:
+                break
+            index = len(images)
+            saved = getattr(self, "_saved_xrefs", {}).get(xref)
+            if saved is not None:
+                # The same image object on another page: point to the file already written.
+                target_path, name = saved
+            else:
+                if getattr(self, "_saved_image_bytes", 0) >= _MAX_IMAGE_BYTES_PER_DOCUMENT:
+                    break
+                try:
+                    pymupdf = _import_pymupdf()
+                    pix = pymupdf.Pixmap(doc, xref)
+                    if pix.n - pix.alpha >= 4:  # CMYK -> RGB
+                        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+                    if pix.width < _MIN_IMAGE_SIDE or pix.height < _MIN_IMAGE_SIDE:
+                        continue
+                    self.image_dir.mkdir(parents=True, exist_ok=True)
+                    name = f"p{page_no}_{index}.png"
+                    target = self.image_dir / name
+                    pix.save(str(target))
+                    target_path = str(target)
+                    self._saved_image_bytes = getattr(self, "_saved_image_bytes", 0) + target.stat().st_size
+                    if not hasattr(self, "_saved_xrefs"):
+                        self._saved_xrefs = {}
+                    self._saved_xrefs[xref] = (target_path, name)
+                except Exception as exc:
+                    logger.debug("image %s on page %d skipped: %s", xref, page_no, exc)
                     continue
-                self.image_dir.mkdir(parents=True, exist_ok=True)
-                index = len(images)
-                name = f"p{page_no}_{index}.png"
-                target = self.image_dir / name
-                pix.save(str(target))
-            except Exception as exc:
-                logger.debug("image %s on page %d skipped: %s", xref, page_no, exc)
-                continue
 
-            images.append({"image_index": index, "file_path": str(target), "page": page_no, "img_name": name})
+            images.append({"image_index": index, "file_path": target_path, "page": page_no, "img_name": name})
             blocks.append((y0, Block(
                 id="",
                 type="paragraph",

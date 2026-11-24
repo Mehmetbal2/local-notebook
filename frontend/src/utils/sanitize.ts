@@ -61,15 +61,16 @@ function configure() {
   configured = true
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     const tag = node.tagName.toLowerCase()
-    // Links that open a new tab must not get a handle on this window.
+    // Links that open a new tab must not get a handle on this window. A link's href is
+    // only followed on a click, so it stays; its style is still checked below.
     if (tag === 'a') {
       if (node.getAttribute('target') === '_blank') node.setAttribute('rel', 'noopener noreferrer')
-      return
-    }
-    // Anything else that loads a resource by itself must stay on this site (or data:/blob:).
-    for (const name of AUTO_LOADING_ATTRIBUTES) {
-      const value = node.getAttribute(name)
-      if (value !== null && (name === 'srcset' || isCrossOriginFetch(value))) node.removeAttribute(name)
+    } else {
+      // Anything else that loads a resource by itself must stay on this site (or data:/blob:).
+      for (const name of AUTO_LOADING_ATTRIBUTES) {
+        const value = node.getAttribute(name)
+        if (value !== null && (name === 'srcset' || isCrossOriginFetch(value))) node.removeAttribute(name)
+      }
     }
     const style = node.getAttribute('style')
     if (style && loadsExternalResource(node as HTMLElement, style)) node.removeAttribute('style')
@@ -118,4 +119,14 @@ export function safeHref(url: string | null | undefined): string | undefined {
   } catch {
     return undefined
   }
+}
+
+/**
+ * An image address that is safe to load without a click: same site, data: or blob:.
+ * Anything else (for example a favicon URL taken from markup in a model answer)
+ * becomes '' so it is not requested.
+ */
+export function safeImageSrc(url: string | null | undefined): string {
+  if (!url) return ''
+  return isCrossOriginFetch(url) ? '' : url
 }

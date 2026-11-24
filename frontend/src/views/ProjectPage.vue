@@ -424,7 +424,7 @@
 <script setup lang="ts">
 import { displaySessionTitle as displaySessionTitleText, isPlaceholderSessionTitle } from '../utils/sessionTitle'
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
-import { openExternalUrl } from '../utils/sanitize'
+import { openExternalUrl, safeImageSrc } from '../utils/sanitize'
 import { useRoute, useRouter } from 'vue-router'
 import 'katex/dist/katex.min.css'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
@@ -1453,7 +1453,7 @@ function handleWebCitationHover(event: MouseEvent) {
     webCitationTooltip.snippet = citationEl.dataset.snippet || ''
     webCitationTooltip.source = citationEl.dataset.source || ''
     webCitationTooltip.date = citationEl.dataset.date || ''
-    webCitationTooltip.favicon = citationEl.dataset.favicon || ''
+    webCitationTooltip.favicon = safeImageSrc(citationEl.dataset.favicon)
     webCitationTooltip.visible = true
   }
 }

@@ -368,7 +368,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
-import { openExternalUrl } from '../../utils/sanitize'
+import { openExternalUrl, safeImageSrc } from '../../utils/sanitize'
 import type { WorkflowDetail, WorkflowStatus, WorkflowContentFeature } from '../../services/api'
 import type { FeatureBlock, CitationMetadata } from '../../types'
 import { parseInlineMarkdown } from '../../utils'
@@ -758,7 +758,7 @@ function getWebCitationMeta(citationId: string, feature: WorkflowContentFeature)
 
 function getWebCitationFavicon(citationId: string, feature: WorkflowContentFeature): string {
   const meta = getWebCitationMeta(citationId, feature)
-  return meta?.favicon || ''
+  return safeImageSrc(meta?.favicon)
 }
 
 
