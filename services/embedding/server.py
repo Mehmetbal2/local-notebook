@@ -38,6 +38,12 @@ _DEFAULT_MODEL_DIR = _MODELS_DIR / "bge-m3"
 MODEL_NAME = os.getenv("MODEL", str(_DEFAULT_MODEL_DIR))
 PORT = int(os.getenv("PORT", "8001"))
 MAX_BATCH = int(os.getenv("MAX_BATCH", "64"))
+# Request limits: the backend sends 10 short segments at a time, so these only stop
+# oversized requests that could exhaust memory.
+MAX_INPUTS = int(os.getenv("MAX_INPUTS", "512"))
+MAX_INPUT_CHARS = int(os.getenv("MAX_INPUT_CHARS", "32000"))
+# Listens on this computer only; set HOST=0.0.0.0 to share it on the network (it has no authentication).
+HOST = os.getenv("HOST", "127.0.0.1")
 
 
 def _detect_device() -> str:
@@ -131,6 +137,10 @@ async def create_embeddings(req: EmbeddingRequest) -> EmbeddingResponse:
 
     if not texts:
         raise HTTPException(status_code=422, detail="input must not be empty")
+    if len(texts) > MAX_INPUTS:
+        raise HTTPException(status_code=413, detail=f"at most {MAX_INPUTS} inputs per request")
+    if any(len(t) > MAX_INPUT_CHARS for t in texts):
+        raise HTTPException(status_code=413, detail=f"each input may have at most {MAX_INPUT_CHARS} characters")
 
     # Batch encode — run in sync (sentence-transformers releases the GIL)
     import asyncio
@@ -158,4 +168,4 @@ async def create_embeddings(req: EmbeddingRequest) -> EmbeddingResponse:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=PORT, reload=False)
+    uvicorn.run("server:app", host=HOST, port=PORT, reload=False)

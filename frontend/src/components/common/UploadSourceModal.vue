@@ -95,7 +95,7 @@
                   />
                   <div class="web-result-main">
                     <div class="web-result-title-row">
-                      <a :href="item.url" target="_blank" rel="noopener noreferrer" class="web-result-title" @click.stop>{{ item.title }}</a>
+                      <a :href="safeHref(item.url)" target="_blank" rel="noopener noreferrer" class="web-result-title" @click.stop>{{ item.title }}</a>
                       <span v-if="item.imported" class="web-badge done">{{ $t('ui.webSourcesAdded') }}</span>
                     </div>
                     <div class="web-result-meta">
@@ -288,6 +288,7 @@
 </template>
 
 <script setup lang="ts">
+import { safeHref } from '../../utils/sanitize'
 import { useEscapeClose } from '../../composables/useEscapeClose'
 import { ref, computed, watch, nextTick, reactive } from 'vue'
 import {

@@ -368,6 +368,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { openExternalUrl } from '../../utils/sanitize'
 import type { WorkflowDetail, WorkflowStatus, WorkflowContentFeature } from '../../services/api'
 import type { FeatureBlock, CitationMetadata } from '../../types'
 import { parseInlineMarkdown } from '../../utils'
@@ -789,9 +790,7 @@ function hideWebCitationCard() {
 
 function handleWebCitationClick(citationId: string, feature: WorkflowContentFeature) {
   const meta = getWebCitationMeta(citationId, feature)
-  if (meta?.url) {
-    window.open(meta.url, '_blank', 'noopener,noreferrer')
-  }
+  openExternalUrl(meta?.url)
 }
 
 

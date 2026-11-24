@@ -85,7 +85,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { login, getCurrentUser } from '../services/api'
-import { setTokens, setUser } from '../services/auth'
+import { setMediaToken, setTokens, setUser } from '../services/auth'
 import { t } from '../i18n'
 import AppLogo from '../components/common/AppLogo.vue'
 import LanguageSwitcher from '../components/common/LanguageSwitcher.vue'
@@ -109,6 +109,9 @@ async function handleLogin() {
 
     if (response.success) {
       setTokens(response.access_token, response.refresh_token)
+      if (response.media_token) {
+        setMediaToken(response.media_token, Number(response.media_token_expires_in) || 0)
+      }
 
       try {
         const userInfo = await getCurrentUser()

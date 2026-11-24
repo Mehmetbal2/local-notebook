@@ -12,13 +12,17 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      // xfwd adds X-Forwarded-For, so the backend (which trusts it only from this
+      // machine) sees each user's own address, e.g. for the sign-in attempt limit.
       '/api': {
-        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8081',
+        target: process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8081',
         changeOrigin: true,
+        xfwd: true,
       },
       '/health': {
-        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8081',
+        target: process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8081',
         changeOrigin: true,
+        xfwd: true,
       },
     },
   },

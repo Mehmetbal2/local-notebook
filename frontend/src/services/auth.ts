@@ -1,6 +1,11 @@
 const ACCESS_TOKEN_KEY = 'access_token'
 const REFRESH_TOKEN_KEY = 'refresh_token'
 const USER_KEY = 'user'
+// Short-lived token for <img>/<audio> preview URLs, which cannot send an Authorization
+// header. The backend accepts it only on preview routes, so a URL that ends up in
+// browser history or a log does not expose the full session.
+const MEDIA_TOKEN_KEY = 'media_token'
+const MEDIA_TOKEN_EXPIRES_KEY = 'media_token_expires_at'
 
 export interface User {
   user_id: string
@@ -23,10 +28,29 @@ export function setTokens(accessToken: string, refreshToken: string) {
   localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
 }
 
+export function setMediaToken(token: string, expiresInSeconds: number) {
+  localStorage.setItem(MEDIA_TOKEN_KEY, token)
+  localStorage.setItem(MEDIA_TOKEN_EXPIRES_KEY, String(Date.now() + Math.max(0, expiresInSeconds) * 1000))
+}
+
+export function getMediaToken(): string | null {
+  const token = localStorage.getItem(MEDIA_TOKEN_KEY)
+  const expiresAt = Number(localStorage.getItem(MEDIA_TOKEN_EXPIRES_KEY) || 0)
+  return token && expiresAt > Date.now() ? token : null
+}
+
+/** True when there is no media token or it expires within `marginMs`. */
+export function mediaTokenNeedsRefresh(marginMs: number): boolean {
+  const expiresAt = Number(localStorage.getItem(MEDIA_TOKEN_EXPIRES_KEY) || 0)
+  return !localStorage.getItem(MEDIA_TOKEN_KEY) || expiresAt - Date.now() < marginMs
+}
+
 export function clearTokens() {
   localStorage.removeItem(ACCESS_TOKEN_KEY)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
+  localStorage.removeItem(MEDIA_TOKEN_KEY)
+  localStorage.removeItem(MEDIA_TOKEN_EXPIRES_KEY)
 }
 
 export function getUser(): User | null {

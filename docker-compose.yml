@@ -80,14 +80,19 @@ services:
     user: "${CURRENT_UID:-0}:${CURRENT_GID:-0}"
     environment:
       - REDIS_URL=redis://redis:6379
-      - SECRET_KEY=${SECRET_KEY:-please-change-this-in-production}
+      # Empty → the backend generates a random key once and keeps it in the data folder.
+      - SECRET_KEY=${SECRET_KEY:-}
       - DATABASE_URL=sqlite+aiosqlite:////app/data/local_notebook.db
       - MILVUS_URI=http://milvus:19530
       - UPLOAD_DIR=/app/data/uploads
+      # Requests reach the backend through the frontend's nginx, which sets X-Forwarded-For;
+      # trusting it gives the sign-in limiter each user's real address.
+      - FORWARDED_ALLOW_IPS=*
     volumes:
       - ${LOCAL_NOTEBOOK_DATA_DIR:-./local-notebook-data}:/app/data
     ports:
-      - "8081:8000"
+      # The interface reaches the API through nginx (port 8080); 8081 is for this machine only.
+      - "127.0.0.1:8081:8000"
 
   frontend:
     build: ./frontend

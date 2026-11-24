@@ -39,7 +39,7 @@
           <div class="rs-main">
             <div class="rs-title-row">
               <span class="rs-num">[{{ source.n }}]</span>
-              <a :href="source.url" target="_blank" rel="noopener noreferrer" class="rs-title">{{ source.title }}</a>
+              <a :href="safeHref(source.url)" target="_blank" rel="noopener noreferrer" class="rs-title">{{ source.title }}</a>
             </div>
             <div class="rs-meta">
               <span>{{ metaLine(source) }}</span>
@@ -58,6 +58,7 @@
 </template>
 
 <script setup lang="ts">
+import { safeHref } from '../../../utils/sanitize'
 import { computed, reactive, ref, watch } from 'vue'
 import type { ResearchSource } from '../../../types'
 import { importWebSources, type WebSourceImportResponse } from '../../../services/api'

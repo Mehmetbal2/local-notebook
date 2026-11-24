@@ -52,6 +52,12 @@ Endpoint: `POST http://localhost:8003/transcribe` (multipart/form-data, field=`f
 
 ---
 
+## Network access
+
+Both services have no authentication, so they listen on `127.0.0.1` (this computer only) by default. If the backend runs in Docker or on another machine, start them with `HOST=0.0.0.0` and make sure the port is not reachable from untrusted networks. Request limits: the embedding service accepts at most `MAX_INPUTS` (512) texts of `MAX_INPUT_CHARS` (32,000) characters per request; FunASR accepts audio files up to `MAX_UPLOAD_MB` (500 MB).
+
+---
+
 ## Settings Page
 
 After starting a service, enter its URL in **Settings → Embedding / Audio**. Changes take effect without restarting the main backend service.

@@ -15,6 +15,15 @@ Bu projedeki önemli değişiklikler bu dosyada tutulur. Sürüm numaraları [An
 - DOCX dışa aktarımında markdown görsel bağlantıları artık sunucudaki dosyaları belgeye gömemez.
 - `[citation_0-citation_999999999]` gibi dev atıf aralıkları açılmaz; bellek tükenmesi önlendi.
 - Docker Compose: Redis ve Milvus yalnızca `127.0.0.1` üzerinden yayınlanır (parolasız Redis üzerinden kod çalıştırma ve Milvus'a doğrudan erişim engellendi).
+- Docker Compose'daki örnek `SECRET_KEY` değeri ve 32 karakterden kısa anahtarlar artık kullanılmaz; yerine kalıcı rastgele bir anahtar üretilir (bu değerle imzalanmış sahte oturumlar engellendi).
+- Web sayfası indirirken denetlenen adres ile bağlanılan adres aynıdır; "DNS rebinding" ile yerel ağa erişim engellendi.
+- Yükleme denetimi oturumun hâlâ geçerli olduğunu (şifre değişmemiş olmasını) da kontrol eder; yedek geri yükleme gövdesi yalnızca yöneticiden kabul edilir. Yükleme dışındaki istek gövdeleri en fazla 20 MB olabilir (`MAX_REQUEST_MB`). Docker'da nginx yüklemeleri diske biriktirmeden doğrudan iletir.
+- Hatalı giriş denemeleri sınırlanır (kullanıcı adı ve adres başına 15 dakikada 10); şifre kontrolü artık diğer istekleri bekletmez.
+- Görsel ve ses önizleme adreslerinde oturum anahtarı yerine yalnızca önizlemeleri açabilen, 12 saatlik bir anahtar kullanılır.
+- Arayüzdeki HTML temizleyici DOMPurify ile değiştirildi ("mutation XSS" saldırılarına karşı).
+- Web atıflarına ve kaynak bağlantılarına tıklandığında yalnızca http/https adresleri açılır; model yanıtına yerleştirilmiş `javascript:` bağlantıları çalışmaz.
+- EPUB'ta aynı bölümün tekrar tekrar listelenmesiyle bellek tüketimi engellendi.
+- `start.sh` API'yi yalnızca bu bilgisayarda dinletir (`BACKEND_HOST`); yerel gömme ve ses servisleri de varsayılan olarak `127.0.0.1` üzerinde çalışır ve istek boyutlarını sınırlar.
 - Sohbet ve bağlantı testi hataları kullanıcıya hatanın türüyle (zaman aşımı, bağlantı, API anahtarı, kota, bağlam penceresi…) bildirilir; ayrıntılar yalnızca sunucu günlüğünde kalır. Kimlik doğrulamasız `/health/redis` uç noktası hata metni döndürmez.
 
 ## [1.0.0] - 2026-11-19

@@ -236,6 +236,25 @@ searxng_status() {
   fi
 }
 
+# Install frontend packages when package-lock.json changed since the last install
+# (for example after an update that added a dependency).
+ensure_frontend_deps() {
+  local fe="$PROJECT_ROOT/frontend"
+  local stamp="$fe/node_modules/.package-lock.json"
+  if [[ -f "$stamp" && ! "$fe/package-lock.json" -nt "$stamp" ]]; then
+    return 0
+  fi
+  local npm_cli="$PROJECT_ROOT/.node/lib/node_modules/npm/bin/npm-cli.js"
+  echo "Installing frontend packages (package-lock.json changed)..."
+  if [[ -f "$npm_cli" ]]; then
+    (cd "$fe" && "$NODE_BIN" "$npm_cli" install --no-audit --no-fund)
+  elif command -v npm >/dev/null 2>&1; then
+    (cd "$fe" && npm install --no-audit --no-fund)
+  else
+    echo "Warning: npm not found; run 'npm install' in frontend/ manually."
+  fi
+}
+
 start_services() {
   local detach=false
   local build_frontend=false
@@ -246,6 +265,8 @@ start_services() {
       --with-embedding) START_EMBEDDING=1 ;;
     esac
   done
+
+  ensure_frontend_deps
 
   if [[ "$build_frontend" == "true" ]] || [[ ! -d "$PROJECT_ROOT/frontend/dist" ]]; then
     echo "Building frontend..."
@@ -277,8 +298,10 @@ start_services() {
     rotate_log "$LOG_DIR/backend.log"
     (
       cd "$PROJECT_ROOT/backend"
+      # The API listens on this computer only; other devices on the network use it
+      # through the interface (vite proxies /api). BACKEND_HOST=0.0.0.0 exposes it directly.
       PORT="$BACKEND_PORT" nohup "$PYTHON_BIN" -m uvicorn main:app \
-        --host 0.0.0.0 --port "$BACKEND_PORT" \
+        --host "${BACKEND_HOST:-127.0.0.1}" --port "$BACKEND_PORT" \
         < /dev/null >> "$LOG_DIR/backend.log" 2>&1 &
       echo $! > "$BACKEND_PID_FILE"
     )
@@ -291,7 +314,7 @@ start_services() {
     rotate_log "$LOG_DIR/frontend.log"
     (
       cd "$PROJECT_ROOT/frontend"
-      VITE_PROXY_TARGET="http://localhost:$BACKEND_PORT" nohup "$NODE_BIN" ./node_modules/vite/bin/vite.js \
+      VITE_PROXY_TARGET="http://127.0.0.1:$BACKEND_PORT" nohup "$NODE_BIN" ./node_modules/vite/bin/vite.js \
         --host 0.0.0.0 --port "$FRONTEND_PORT" \
         < /dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
       echo $! > "$FRONTEND_PID_FILE"

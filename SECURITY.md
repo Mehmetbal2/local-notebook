@@ -49,6 +49,10 @@ Local Notebook **tek bir bilgisayarda veya güvenilen bir yerel ağda** çalış
 - **Web'den indirme:** Web kaynağı içe aktarma ve web araması yalnızca genel internetteki adreslere gider; yerel ağ, sunucunun kendisi ve bulut meta veri adresleri (yönlendirmeler dahil) engellenir.
 - **Yüklemeler:** Dosya gövdesi okunmadan önce geçerli oturum ve boyut sınırı (`MAX_UPLOAD_MB`) denetlenir; açıldığında aşırı büyüyen EPUB/DOCX arşivleri işlenmez.
 - **Docker:** Redis ve Milvus yalnızca `127.0.0.1` üzerinden yayınlanır.
+- **Giriş denemeleri:** Aynı kullanıcı adı ve adres için art arda hatalı şifre denemeleri sınırlanır (varsayılan 15 dakikada 10).
+- **Önizleme bağlantıları:** Görsel ve ses adreslerinde oturum anahtarı değil, yalnızca önizlemeleri açabilen kısa ömürlü bir anahtar bulunur.
+- **Arayüz güvenliği:** Model yanıtları ve belge içerikleri DOMPurify ile temizlenerek gösterilir.
+- **Ağ:** `start.sh` API'yi yalnızca bu bilgisayarda dinletir; ağdaki diğer cihazlar arayüz üzerinden erişir. Yerel gömme ve ses servisleri de varsayılan olarak yalnızca `127.0.0.1` üzerinde çalışır.
 - **Repo güvenliği:** GitHub Actions testleri, CodeQL taraması, Dependabot bağımlılık uyarıları ve gizli bilgi taraması için `.gitleaks.toml` yapılandırması.
 
 ## Kapsam
@@ -108,6 +112,10 @@ Local Notebook is designed to run **on one computer or a trusted local network**
 - Web-source import and web search fetch only public internet addresses; loopback, private networks and cloud metadata endpoints are blocked, including through redirects.
 - Uploads: a valid session and the size limit (`MAX_UPLOAD_MB`) are checked before the body is read; EPUB/DOCX archives that would expand to an unreasonable size are refused.
 - Docker: Redis and Milvus are published on `127.0.0.1` only.
+- Repeated failed sign-ins for the same user name and address are limited (10 per 15 minutes by default).
+- Image and audio URLs carry a short-lived, preview-only token, never the session token.
+- Model output and document content are cleaned with DOMPurify before display.
+- Network: `start.sh` binds the API to this computer only; other devices use it through the interface. The local embedding and audio services also listen on `127.0.0.1` by default.
 - Repository: GitHub Actions tests, CodeQL scanning, Dependabot alerts and a `.gitleaks.toml` secret-scanning configuration.
 
 ## Scope

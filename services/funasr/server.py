@@ -50,6 +50,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
 logger = logging.getLogger("funasr-server")
 
 PORT = int(os.getenv("PORT", "8003"))
+# Listens on this computer only; set HOST=0.0.0.0 to share it on the network (it has no authentication).
+HOST = os.getenv("HOST", "127.0.0.1")
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "500")) * 1024 * 1024
 MODEL_DIR = os.getenv("MODEL_DIR", None)   # optional custom model path
 
 
@@ -192,9 +195,16 @@ async def transcribe(
         raise HTTPException(status_code=503, detail="FunASR model not loaded")
 
     import asyncio
+    size = 0
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-        tmp.write(await file.read())
         tmp_path = tmp.name
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_UPLOAD_BYTES:
+                tmp.close()
+                os.unlink(tmp_path)
+                raise HTTPException(status_code=413, detail="audio file is too large")
+            tmp.write(chunk)
 
     try:
         loop = asyncio.get_event_loop()
@@ -208,4 +218,4 @@ async def transcribe(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=PORT, reload=False)
+    uvicorn.run("server:app", host=HOST, port=PORT, reload=False)

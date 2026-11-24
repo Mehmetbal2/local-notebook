@@ -112,7 +112,11 @@ the vectors; in server mode it does not.
 | `BACKUP_KEEP_PRE_RESTORE` | `3` | Pre-restore safety copies kept |
 | `BACKUP_DOWNLOAD_TTL_SECONDS` | `900` | Lifetime of a prepared backup's one-time link |
 | `USAGE_TIMEZONE` | system time zone | Time zone used to date model usage (was fixed to Asia/Shanghai) |
-| `MAX_UPLOAD_MB` | `500` | Largest multipart upload; multipart requests also need a valid token before their body is read. Backup restores are exempt from the size limit |
+| `MAX_UPLOAD_MB` | `500` | Largest multipart upload; multipart requests also need a valid session before their body is read. Backup restores need an admin and are exempt from the size limit |
+| `MAX_REQUEST_MB` | `20` | Largest non-upload request body (JSON, forms) |
+| `MEDIA_TOKEN_EXPIRE_MINUTES` | `720` | Lifetime of the preview-only token put in image/audio URLs |
+| `LOGIN_MAX_FAILURES` / `LOGIN_MAX_FAILURES_PER_ADDRESS` / `LOGIN_WINDOW_SECONDS` | `10` / `50` / `900` | Failed sign-ins allowed per user name and address, per address, and the window; then 429 |
+| `BACKEND_HOST` | `127.0.0.1` | Address `start.sh` binds the API to. Other devices use the API through the interface port; set `0.0.0.0` only to expose the API directly |
 | `ARCHIVE_MAX_UNCOMPRESSED_MB` | `512` | Largest unpacked size of an EPUB/DOCX (zip bomb guard) |
 | `WEB_FETCH_ALLOW_PRIVATE` | off | Set to `1` to let web-source import and web search read pages on loopback/private/link-local addresses (intranet). Off by default so users cannot reach server-internal services |
 | `SQLITE_JOURNAL_MODE` | `WAL` | SQLite journal mode |

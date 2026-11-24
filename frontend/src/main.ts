@@ -5,6 +5,7 @@ import { i18n } from './i18n'
 import { vKeyActivate } from './directives/keyActivate'
 import { installUiLanguageFetch } from './services/uiLanguageHeader'
 import { installGlobalTooltip } from './utils/globalTooltip'
+import { refreshMediaToken, startMediaTokenRefresh } from './services/api'
 import './assets/main.css'
 
 // Favicons in web citations come from arbitrary sites; when one fails to load,
@@ -29,4 +30,10 @@ const app = createApp(App)
 app.directive('key-activate', vKeyActivate)
 app.use(i18n)
 app.use(router)
-app.mount('#app')
+
+// Preview images and audio need a media token in their URL; get one before the first
+// render (at most ~3 s), then keep it fresh in the background.
+void Promise.race([refreshMediaToken(), new Promise((resolve) => setTimeout(resolve, 3000))]).finally(() => {
+  app.mount('#app')
+  startMediaTokenRefresh()
+})

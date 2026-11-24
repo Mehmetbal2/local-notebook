@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type { Project, FileInfo, Session, ToolExecuting, FileContent, Feature, FeatureBlock, ImageFileInfo } from '../types'
-import { getToken, clearTokens } from './auth'
+import { getToken, clearTokens, getMediaToken, setMediaToken, mediaTokenNeedsRefresh } from './auth'
 import { getModelOutputLanguage, t } from '../i18n'
 import { UI_LANGUAGE_HEADER, currentUiLanguage } from './uiLanguageHeader'
 
@@ -90,6 +90,26 @@ export async function login(username: string, password: string) {
   const form = new URLSearchParams({ username, password })
   const response = await axios.post(`${API_BASE}/api/auth/login`, form)
   return response.data
+}
+
+/** Fetch a fresh short-lived media token (for preview URLs) when it is missing or about to expire. */
+export async function refreshMediaToken(marginMs = 2 * 60 * 60 * 1000): Promise<void> {
+  if (!getToken() || !mediaTokenNeedsRefresh(marginMs)) return
+  try {
+    const response = await api.get('/api/auth/media-token')
+    if (response.data?.media_token) {
+      setMediaToken(response.data.media_token, Number(response.data.expires_in) || 0)
+    }
+  } catch {
+    // Signed out or offline: previews fail until the next successful refresh.
+  }
+}
+
+let mediaTokenTimer: ReturnType<typeof setInterval> | null = null
+
+export function startMediaTokenRefresh() {
+  if (mediaTokenTimer) return
+  mediaTokenTimer = setInterval(() => { void refreshMediaToken() }, 15 * 60 * 1000)
 }
 
 export async function getCurrentUser() {
@@ -1394,19 +1414,19 @@ export interface ImageInfo {
 
 
 export function getImagePreviewUrl(fileId: string): string {
-  const token = getToken()
+  const token = getMediaToken()
   const query = token ? `?token=${encodeURIComponent(token)}` : ''
   return `${API_BASE}/api/files/${fileId}/preview${query}`
 }
 
 export function getAudioPreviewUrl(fileId: string): string {
-  const token = getToken()
+  const token = getMediaToken()
   const query = token ? `?token=${encodeURIComponent(token)}` : ''
   return `${API_BASE}/api/files/${fileId}/preview${query}`
 }
 
 export function getEmbeddedImagePreviewUrl(fileId: string, imageIndex: number): string {
-  const token = getToken()
+  const token = getMediaToken()
   const query = token ? `?token=${encodeURIComponent(token)}` : ''
   return `${API_BASE}/api/files/${fileId}/images/${imageIndex}/preview${query}`
 }
@@ -1421,7 +1441,7 @@ export function getAssetUrl(path: string): string {
 
   const base = `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
   if (path.startsWith('/api/')) {
-    const token = getToken()
+    const token = getMediaToken()
     if (token && !base.includes('token=')) {
       const sep = base.includes('?') ? '&' : '?'
       return `${base}${sep}token=${encodeURIComponent(token)}`

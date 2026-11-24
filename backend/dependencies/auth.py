@@ -22,7 +22,14 @@ logger = logging.getLogger(__name__)
 _INSECURE_SECRET_KEYS = {
     "change-me-in-production",
     "local-notebook-universal-secret-key-change-in-production",
+    "please-change-this-in-production",
 }
+# A configured key shorter than this is treated like a placeholder.
+_MIN_SECRET_KEY_LENGTH = 32
+
+
+def _is_usable_secret_key(value: str) -> bool:
+    return len(value) >= _MIN_SECRET_KEY_LENGTH and value not in _INSECURE_SECRET_KEYS
 
 
 def _load_or_create_secret_key() -> str:
@@ -32,8 +39,13 @@ def _load_or_create_secret_key() -> str:
     sessions). An explicitly configured, non-placeholder SECRET_KEY always wins.
     """
     env_value = (os.getenv("SECRET_KEY") or "").strip()
-    if env_value and env_value not in _INSECURE_SECRET_KEYS:
+    if _is_usable_secret_key(env_value):
         return env_value
+    if env_value:
+        logger.warning(
+            "Ignoring SECRET_KEY from the environment: it is a known placeholder or shorter than %d characters.",
+            _MIN_SECRET_KEY_LENGTH,
+        )
 
     from paths import get_data_dir
 
@@ -66,6 +78,10 @@ SECRET_KEY = _load_or_create_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
 REFRESH_TOKEN_EXPIRE_DAYS = 30
+# Media tokens go in <img>/<audio> URLs (?token=...), which end up in browser history and
+# access logs. They are short-lived and accepted only by the file/audio preview routes,
+# never as a general API credential.
+MEDIA_TOKEN_EXPIRE_MINUTES = int(os.getenv("MEDIA_TOKEN_EXPIRE_MINUTES", "720"))
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 _optional_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -121,6 +137,16 @@ def token_payload_for(user: User) -> dict:
     }
 
 
+def create_media_token(user: User) -> str:
+    payload = {
+        "sub": user.id,
+        "pwv": password_fingerprint(user.password_hash),
+        "type": "media",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=MEDIA_TOKEN_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
 def token_matches_user(payload: dict, user: User) -> bool:
     claim = payload.get("pwv")
     if not isinstance(claim, str):
@@ -172,7 +198,9 @@ async def get_current_user_query_or_header(
     query_token: Optional[str] = Query(default=None, alias="token"),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    token = header_token or query_token
-    if not token:
-        raise _credentials_exc
-    return await _get_user_from_token(token, db)
+    if header_token:
+        return await _get_user_from_token(header_token, db)
+    if query_token:
+        # Only a short-lived media token is accepted in the URL, never a full access token.
+        return await _get_user_from_token(query_token, db, expected_type="media")
+    raise _credentials_exc

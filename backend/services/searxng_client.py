@@ -417,13 +417,17 @@ def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-async def check_public_destination(url: str) -> None:
-    """Raise SearxngError("blocked") unless the URL is http(s) and resolves only to public addresses."""
+async def check_public_destination(url: str) -> str | None:
+    """Raise SearxngError("blocked") unless the URL is http(s) and resolves only to public addresses.
+
+    Returns one of the checked addresses so the caller can connect to exactly that
+    address (None when private addresses are allowed and no check was made).
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise SearxngError("blocked", "only http and https addresses can be fetched")
     if WEB_FETCH_ALLOW_PRIVATE:
-        return
+        return None
     host = parsed.hostname
     try:
         addresses = {ipaddress.ip_address(host)}
@@ -436,10 +440,42 @@ async def check_public_destination(url: str) -> None:
         addresses = {ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos}
     if not addresses or not all(_is_public_ip(ip) for ip in addresses):
         raise SearxngError("blocked", f"{host} is not a public internet address")
+    return str(sorted(addresses, key=lambda ip: (ip.version, int(ip)))[0])
 
 
 async def _check_request_destination(request: httpx.Request) -> None:
     await check_public_destination(str(request.url))
+
+
+class _PublicOnlyTransport(httpx.AsyncBaseTransport):
+    """Connects to the address that was checked, not to a second DNS answer.
+
+    Checking a host name and then letting the HTTP client resolve it again would
+    let a "DNS rebinding" domain answer with a public address for the check and a
+    private one for the connection. Here every request (each redirect hop too) is
+    sent to the checked IP; the Host header and TLS server name (SNI, also used to
+    verify the certificate) keep the original host name.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport | None = None):
+        self._inner = inner or httpx.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        pinned = await check_public_destination(str(request.url))
+        if pinned is None:
+            return await self._inner.handle_async_request(request)
+        original_url = request.url
+        request.url = original_url.copy_with(host=pinned)
+        if original_url.scheme == "https":
+            request.extensions = {**request.extensions, "sni_hostname": original_url.host}
+        try:
+            return await self._inner.handle_async_request(request)
+        finally:
+            # Callers (redirects, resp.url, relative links) keep seeing the host name.
+            request.url = original_url
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
 
 
 def _looks_like_pdf(content_type: str, body: bytes) -> bool:
@@ -461,6 +497,7 @@ async def fetch_page(url: str, *, timeout: float = 15.0, follow_pdf: bool = Fals
         timeout=timeout,
         follow_redirects=True,
         headers=headers,
+        transport=_PublicOnlyTransport(),
         event_hooks={"request": [_check_request_destination]},
     ) as client:
         resp, body = await _download(client, url, MAX_PDF_BYTES)

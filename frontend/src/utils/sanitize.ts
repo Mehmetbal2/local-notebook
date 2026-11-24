@@ -2,80 +2,73 @@
  * HTML sanitiser for content rendered with v-html.
  *
  * Model output, document text and parsed table markup are untrusted: Markdown
- * lets raw HTML through, so without this a document or a model reply could run
- * script in the user's session. The markup is parsed into an inert document,
- * dangerous elements are dropped and every attribute that can execute code or
- * load a non-http resource is removed. KaTeX output (spans, inline styles,
- * MathML, SVG paths) and citation markers (class / data-* attributes) pass through.
+ * lets raw HTML through, and an imported web page or document can steer a
+ * model's answer (prompt injection), so without this a reply could run script
+ * in the user's session.
+ *
+ * DOMPurify does the work. A hand-written sanitiser that parses, removes nodes
+ * and serialises again is open to "mutation XSS": markup such as <xmp>, <noembed>
+ * or an <svg>/<math> namespace switch looks harmless after the first parse but
+ * turns into a live element when Vue parses the result a second time. DOMPurify
+ * checks namespaces and re-parse safety. KaTeX output (spans, inline styles,
+ * MathML, SVG) and citation markers (class / data-* attributes) pass through.
  */
 
-const BLOCKED_TAGS = new Set([
-  'script', 'style', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet',
-  'link', 'meta', 'base', 'form', 'input', 'button', 'textarea', 'select', 'option',
-  'noscript', 'template', 'slot', 'portal', 'dialog',
-  'foreignobject', 'animate', 'animatemotion', 'animatetransform', 'set', 'use',
-  'audio', 'video', 'source', 'track', 'canvas', 'marquee',
-])
+import DOMPurify from 'dompurify'
 
-const URL_ATTRIBUTES = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster', 'background', 'cite', 'data'])
-const BLOCKED_ATTRIBUTES = new Set(['srcdoc', 'srcset', 'ping', 'formaction', 'action'])
+let configured = false
 
-const SAFE_URL = /^(?:https?:|mailto:|tel:|#|\/(?!\/)|\.{0,2}\/|blob:|data:image\/(?:png|jpe?g|gif|webp);base64,)/i
-const UNSAFE_STYLE = /expression\s*\(|url\s*\(|@import|behavior\s*:|-moz-binding/i
-
-function isSafeUrl(value: string): boolean {
-  // Control characters and whitespace are ignored by browsers when resolving a scheme.
-  const compact = value.replace(/[\u0000- \u007f-\u009f]/g, '')
-  if (compact === '') return true
-  if (SAFE_URL.test(compact)) return true
-  // Relative reference without a scheme (no colon before the first slash, ? or #).
-  return !/^[a-z][a-z0-9+.-]*:/i.test(compact)
-}
-
-function scrubElement(element: Element) {
-  for (const attribute of Array.from(element.attributes)) {
-    const name = attribute.name.toLowerCase()
-    const value = attribute.value
-
-    if (name.startsWith('on') || BLOCKED_ATTRIBUTES.has(name)) {
-      element.removeAttribute(attribute.name)
-    } else if (URL_ATTRIBUTES.has(name) && !isSafeUrl(value)) {
-      element.removeAttribute(attribute.name)
-    } else if (name === 'style' && UNSAFE_STYLE.test(value)) {
-      element.removeAttribute(attribute.name)
+function configure() {
+  if (configured) return
+  configured = true
+  // Links that open a new tab must not get a handle on this window.
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName === 'A' && node.getAttribute('target') === '_blank') {
+      node.setAttribute('rel', 'noopener noreferrer')
     }
-  }
-
-  if (element.tagName.toLowerCase() === 'a' && element.getAttribute('target') === '_blank') {
-    element.setAttribute('rel', 'noopener noreferrer')
-  }
+  })
 }
 
 export function sanitizeHtml(html: string): string {
   if (!html) return ''
   // Fast path: nothing that could open a tag.
   if (!html.includes('<')) return html
-  if (typeof DOMParser === 'undefined') {
+  if (typeof window === 'undefined' || !DOMPurify.isSupported) {
     return html.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`)
   }
+  configure()
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true, svg: true, mathMl: true },
+    ADD_ATTR: ['target'],
+    FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'audio', 'video', 'source', 'track'],
+  })
+}
 
-  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
-  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_COMMENT)
-  const toRemove: Node[] = []
-
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node.nodeType === Node.COMMENT_NODE) {
-      toRemove.push(node)
-    } else if (BLOCKED_TAGS.has((node as Element).tagName.toLowerCase())) {
-      toRemove.push(node)
-    } else {
-      scrubElement(node as Element)
-    }
+/**
+ * Open a link from model output or a citation in a new tab, only if it is an
+ * ordinary web address. A `javascript:` or `data:` URL planted in an answer
+ * (for example through prompt injection in an imported page) is ignored.
+ */
+export function openExternalUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  let parsed: URL
+  try {
+    parsed = new URL(url, window.location.href)
+  } catch {
+    return false
   }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+  window.open(parsed.href, '_blank', 'noopener,noreferrer')
+  return true
+}
 
-  for (const node of toRemove) {
-    node.parentNode?.removeChild(node)
+/** The URL itself when it is an http(s) address, otherwise undefined (for :href bindings). */
+export function safeHref(url: string | null | undefined): string | undefined {
+  if (!url) return undefined
+  try {
+    const parsed = new URL(url, window.location.href)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : undefined
+  } catch {
+    return undefined
   }
-
-  return doc.body.innerHTML
 }

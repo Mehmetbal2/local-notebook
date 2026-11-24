@@ -424,6 +424,7 @@
 <script setup lang="ts">
 import { displaySessionTitle as displaySessionTitleText, isPlaceholderSessionTitle } from '../utils/sessionTitle'
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
+import { openExternalUrl } from '../utils/sanitize'
 import { useRoute, useRouter } from 'vue-router'
 import 'katex/dist/katex.min.css'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
@@ -1355,9 +1356,7 @@ async function handleCitationClickEvent(event: MouseEvent) {
     if (citationType === 'web') {
 
       const url = citationEl.dataset.url
-      if (url) {
-        window.open(url, '_blank', 'noopener,noreferrer')
-      }
+      openExternalUrl(url)
     } else if (citationType === 'image') {
 
       const fileId = citationEl.dataset.fileId || ''

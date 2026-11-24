@@ -45,8 +45,14 @@ class EpubParser(BaseParser):
         # (content, block_type, extra) triples in the book's reading order
         collected: List[Tuple[str, str, Dict[str, Any]]] = []
         chapter_index = 0
+        # A spine may list the same chapter many times; each chapter is read once, so a
+        # small file cannot multiply one large chapter into gigabytes of text.
+        seen_items: set[str] = set()
 
         for spine_index, idref, linear in self._iter_spine(book):
+            if idref in seen_items:
+                continue
+            seen_items.add(idref)
             item = book.get_item_with_id(idref)
             if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
                 continue
