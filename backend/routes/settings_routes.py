@@ -21,7 +21,7 @@ from models.user import User
 from services.llm_provider import create_llm_chat_provider, normalize_llm_api_format
 from services.usage_service import record_model_usage
 from utils.errors import public_error_message
-from utils.service_url import InvalidServiceURL, checked_service_url
+from utils.service_url import service_url_problem
 from utils.i18n import msg as ui_msg
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -169,10 +169,10 @@ async def update_settings(
 
     for key, value in filtered.items():
         if key.endswith("_url") and str(value or "").strip():
-            try:
-                filtered[key] = checked_service_url(str(value))
-            except InvalidServiceURL as exc:
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+            problem = service_url_problem(str(value))
+            if problem:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
+            filtered[key] = str(value).strip()
 
     await config.set_many(filtered, db)
 
@@ -385,11 +385,9 @@ def _require_chat_params(
         raise HTTPException(status_code=400, detail="API key is required")
     if require_base_url and not base_url:
         raise HTTPException(status_code=400, detail="Base URL is required")
-    if base_url:
-        try:
-            checked_service_url(base_url)
-        except InvalidServiceURL as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+    problem = service_url_problem(base_url) if base_url else None
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
     if not model:
         raise HTTPException(status_code=400, detail="Model is required")
 
@@ -482,10 +480,10 @@ async def test_ocr(
         return {"ok": False, "msg": ui_msg("missing_api_key")}
     if not base_url:
         return {"ok": False, "msg": ui_msg("missing_base_url")}
-    try:
-        base_url = checked_service_url(base_url)
-    except InvalidServiceURL as exc:
-        return {"ok": False, "msg": str(exc)}
+    problem = service_url_problem(base_url)
+    if problem:
+        return {"ok": False, "msg": problem}
+    base_url = base_url.strip()
     if not model:
         return {"ok": False, "msg": ui_msg("missing_model")}
 
@@ -521,10 +519,10 @@ async def test_funasr(
         return {"ok": False, "msg": ui_msg("missing_api_key")}
     if not base_url:
         return {"ok": False, "msg": ui_msg("missing_base_url")}
-    try:
-        base_url = checked_service_url(base_url)
-    except InvalidServiceURL as exc:
-        return {"ok": False, "msg": str(exc)}
+    problem = service_url_problem(base_url)
+    if problem:
+        return {"ok": False, "msg": problem}
+    base_url = base_url.strip()
     if not model:
         return {"ok": False, "msg": ui_msg("missing_model")}
 
@@ -560,10 +558,10 @@ async def test_tts(
         return {"ok": False, "msg": "API anahtarı yapılandırılmadı"}
     if not base_url:
         return {"ok": False, "msg": "Base URL yapılandırılmadı"}
-    try:
-        base_url = checked_service_url(base_url)
-    except InvalidServiceURL as exc:
-        return {"ok": False, "msg": str(exc)}
+    problem = service_url_problem(base_url)
+    if problem:
+        return {"ok": False, "msg": problem}
+    base_url = base_url.strip()
     if not model:
         return {"ok": False, "msg": "Model adı yapılandırılmadı"}
 
@@ -635,10 +633,9 @@ async def start_local_embedding(
         or await config.get_setting("embedding_local_url", "")
         or config.default_local_embedding_url()
     ).strip()
-    try:
-        base_url = checked_service_url(base_url)
-    except InvalidServiceURL as exc:
-        return {"ok": False, "base_url": "", "msg": str(exc)}
+    problem = service_url_problem(base_url)
+    if problem:
+        return {"ok": False, "base_url": "", "msg": problem}
 
     started = await ensure_local_embedding_service(base_url, wait=True)
     if started.get("ok") and not started.get("starting"):
@@ -697,11 +694,11 @@ async def test_embedding(
 
     if not base_url:
         return {"ok": False, "msg": ui_msg("missing_service_url")}
-    try:
-        base_url = checked_service_url(base_url)
-    except InvalidServiceURL as exc:
+    problem = service_url_problem(base_url)
+    if problem:
         await _mark_verified("embedding_verified", False, db)
-        return {"ok": False, "msg": str(exc)}
+        return {"ok": False, "msg": problem}
+    base_url = base_url.strip()
 
     payload: dict = {"model": model, "input": ["test text"]}
 
@@ -744,10 +741,10 @@ async def test_web_search(
     _: str = Depends(get_current_admin),
 ) -> dict:
     base_url = (body.base_url or "").strip().rstrip("/") or await config.resolve_searxng_url()
-    try:
-        base_url = checked_service_url(base_url)
-    except InvalidServiceURL as exc:
-        return {"ok": False, "msg": str(exc)}
+    problem = service_url_problem(base_url)
+    if problem:
+        return {"ok": False, "msg": problem}
+    base_url = base_url.strip()
     return await _test_searxng(base_url, db)
 
 

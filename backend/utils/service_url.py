@@ -19,18 +19,26 @@ class InvalidServiceURL(ValueError):
     pass
 
 
-def checked_service_url(raw: str | None) -> str:
-    """The address with surrounding whitespace removed; raises InvalidServiceURL if it is unusable."""
+def service_url_problem(raw: str | None) -> str | None:
+    """A message to show when the address is unusable, otherwise None (no exception text involved)."""
     value = (raw or "").strip()
     try:
         parts = urlsplit(value)
         port = parts.port  # raises ValueError for a malformed port
-    except ValueError as exc:
-        raise InvalidServiceURL(ui_msg("invalid_service_url")) from exc
+    except ValueError:
+        return ui_msg("invalid_service_url")
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise InvalidServiceURL(ui_msg("invalid_service_url"))
+        return ui_msg("invalid_service_url")
     if parts.username is not None or parts.password is not None:
-        raise InvalidServiceURL(ui_msg("invalid_service_url_credentials"))
+        return ui_msg("invalid_service_url_credentials")
     if port is not None and not (0 < port < 65536):
-        raise InvalidServiceURL(ui_msg("invalid_service_url"))
-    return value
+        return ui_msg("invalid_service_url")
+    return None
+
+
+def checked_service_url(raw: str | None) -> str:
+    """The address with surrounding whitespace removed; raises InvalidServiceURL if it is unusable."""
+    problem = service_url_problem(raw)
+    if problem:
+        raise InvalidServiceURL(problem)
+    return (raw or "").strip()
