@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import re
 import wave
@@ -6,7 +7,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
+from utils.errors import public_error_message
 from utils.i18n import msg as ui_msg
+
+logger = logging.getLogger(__name__)
 
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；.!?;؟\n])\s*")
 
@@ -48,14 +52,15 @@ def _extract_error_message(response: httpx.Response) -> str:
         if isinstance(data, dict):
             err = data.get("error")
             if isinstance(err, dict) and err.get("message"):
-                return str(err["message"])
+                return str(err["message"])[:300]
             for key in ("detail", "message", "msg"):
                 if data.get(key):
-                    return str(data[key])
+                    return str(data[key])[:300]
     except Exception:
         pass
-    text = (response.text or "").strip()
-    return ui_msg("service_returned", status=response.status_code) + (f": {text[:300]}" if text else "")
+    # The raw body is not shown: the address can point anywhere, so only the status
+    # code and a service's own structured error message are reported.
+    return ui_msg("service_returned", status=response.status_code)
 
 
 @dataclass
@@ -228,7 +233,8 @@ class FunASRClient:
         except httpx.TimeoutException:
             return False, ui_msg("conn_timeout_url", url=self.base_url)
         except Exception as exc:
-            return False, str(exc)
+            logger.warning("FunASR connection test failed: %s", exc)
+            return False, public_error_message(exc)
 
     @staticmethod
     def _to_ms(value) -> int:

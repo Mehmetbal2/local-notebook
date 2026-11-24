@@ -88,6 +88,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "websource_unsupported": {"tr": "Desteklenmeyen içerik türü", "en": "Unsupported content type", "zh": "不支持的内容类型"},
     "websource_http_error": {"tr": "Site hata döndürdü (HTTP {status})", "en": "The site returned an error (HTTP {status})", "zh": "网站返回错误（HTTP {status}）"},
     "websource_timeout": {"tr": "Site zamanında yanıt vermedi", "en": "The site did not respond in time", "zh": "网站响应超时"},
+    "invalid_service_url": {"tr": "Geçersiz servis adresi. http:// ya da https:// ile başlayan bir adres girin.", "en": "Invalid service address. Enter an address starting with http:// or https://.", "zh": "服务地址无效，请输入以 http:// 或 https:// 开头的地址。"},
+    "invalid_service_url_credentials": {"tr": "Adrese kullanıcı adı veya şifre yazmayın; API anahtarını kendi alanına girin.", "en": "Do not put a user name or password in the address; enter the API key in its own field.", "zh": "请勿在地址中包含用户名或密码，请在单独的字段中填写 API 密钥。"},
     "websource_blocked": {"tr": "Bu adres genel internette değil (yerel ağ ya da sunucunun kendisi); güvenlik nedeniyle indirilmedi.", "en": "This address is not on the public internet (a local network or the server itself), so it was not downloaded for safety.", "zh": "该地址不在公共互联网上（本地网络或服务器本身），出于安全考虑未下载。"},
     "websource_fetch_failed": {"tr": "Sayfa indirilemedi", "en": "The page could not be downloaded", "zh": "无法下载页面"},
     "research_queued": {"tr": "Sırada bekliyor…", "en": "Queued…", "zh": "排队中…"},

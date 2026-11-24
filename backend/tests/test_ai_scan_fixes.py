@@ -205,6 +205,18 @@ class EpubSpineTests(unittest.TestCase):
         self.assertEqual(len(texts), 1)
 
 
+class ServiceUrlTests(unittest.TestCase):
+    def test_only_plain_http_addresses_are_accepted(self):
+        from utils.service_url import InvalidServiceURL, checked_service_url
+
+        for good in ("http://127.0.0.1:8001", "https://api.openai.com/v1", " http://192.168.1.20:11434/v1 "):
+            self.assertEqual(checked_service_url(good), good.strip())
+        for bad in ("file:///etc/passwd", "gopher://x", "http://", "localhost:8001", "http://user:pass@host/",
+                    "http://host:99999/", "javascript:alert(1)", ""):
+            with self.subTest(bad=bad), self.assertRaises(InvalidServiceURL):
+                checked_service_url(bad)
+
+
 class CitationRangeTests(unittest.TestCase):
     def test_huge_range_is_not_expanded(self):
         from agent.citation_parser import CitationParser

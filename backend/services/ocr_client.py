@@ -52,14 +52,15 @@ def _extract_error_message(resp: httpx.Response) -> str:
         if isinstance(data, dict):
             err = data.get("error")
             if isinstance(err, dict) and err.get("message"):
-                return str(err["message"])
+                return str(err["message"])[:300]
             for key in ("detail", "message", "msg"):
                 if data.get(key):
-                    return str(data[key])
+                    return str(data[key])[:300]
     except Exception:
         pass
-    text = (resp.text or "").strip()
-    return ui_msg("service_returned", status=resp.status_code) + (f": {text[:300]}" if text else "")
+    # The raw body is not shown: the address can point anywhere, so only the status
+    # code and a service's own structured error message are reported.
+    return ui_msg("service_returned", status=resp.status_code)
 
 
 @dataclass
