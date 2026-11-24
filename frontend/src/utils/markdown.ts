@@ -74,11 +74,18 @@ function protectLatex(text: string, protectedItems: ProtectedItem[]): string {
   })
 }
 
+const PLACEHOLDER_RE = /%%[A-Z_]+_\d+%%/g
+
+/**
+ * Put the protected pieces back in one pass. Replacing them one after another let
+ * a piece that itself contains later placeholders (for example a crafted citation
+ * span in model output) be expanded again and again, growing exponentially and
+ * freezing the tab; here inserted content is never scanned a second time.
+ */
 function restoreProtectedItems(html: string, protectedItems: ProtectedItem[]): string {
-  for (const { placeholder, content } of protectedItems) {
-    html = html.split(placeholder).join(content)
-  }
-  return html
+  if (!protectedItems.length) return html
+  const byPlaceholder = new Map(protectedItems.map((item) => [item.placeholder, item.content]))
+  return html.replace(PLACEHOLDER_RE, (match) => byPlaceholder.get(match) ?? match)
 }
 
 

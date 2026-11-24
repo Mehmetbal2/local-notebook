@@ -437,7 +437,7 @@ class PDFParser(BaseParser):
             cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL | re.IGNORECASE)
             clean_cells = []
             for cell in cells:
-                cell_text = re.sub(r'<[^>]+>', '', cell)
+                cell_text = re.sub(r'<[^<>]+>', '', cell)
                 cell_text = cell_text.replace("\n", " ").strip()
                 clean_cells.append(cell_text)
 

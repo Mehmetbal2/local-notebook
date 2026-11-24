@@ -22,6 +22,9 @@ from utils.time import utc_isoformat
 
 # Compared against when the user name does not exist, so a wrong user name costs the
 # same bcrypt work as a wrong password and does not reveal which names exist.
+MAX_USERNAME_LENGTH = 150
+# bcrypt only reads the first 72 bytes; longer inputs only cost time.
+MAX_PASSWORD_LENGTH = 1024
 _DUMMY_PASSWORD_HASH = "$2b$12$a.NBm6HzKialLq2p10y7fefJG1U6Akt88VIgc4KQ2lvvGocJCb6r."
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -68,6 +71,13 @@ async def login(
 ) -> dict:
     address = request.client.host if request.client else "unknown"
     username = form.username.strip()
+    if len(username) > MAX_USERNAME_LENGTH or len(form.password) > MAX_PASSWORD_LENGTH:
+        # No account can have such a name; refuse it before it is stored as a throttle key.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     wait, attempt = login_throttle.begin_attempt(address, username)
     if wait:
         raise HTTPException(

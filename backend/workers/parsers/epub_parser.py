@@ -45,9 +45,11 @@ class EpubParser(BaseParser):
         # (content, block_type, extra) triples in the book's reading order
         collected: List[Tuple[str, str, Dict[str, Any]]] = []
         chapter_index = 0
-        # A spine may list the same chapter many times; each chapter is read once, so a
-        # small file cannot multiply one large chapter into gigabytes of text.
+        # A spine may list the same chapter many times, directly or through several
+        # manifest ids that point at the same file; each file is read once, so a small
+        # archive cannot multiply one large chapter into gigabytes of text.
         seen_items: set[str] = set()
+        seen_files: set[str] = set()
 
         for spine_index, idref, linear in self._iter_spine(book):
             if idref in seen_items:
@@ -60,6 +62,10 @@ class EpubParser(BaseParser):
                 continue
 
             href = item.get_name() or ""
+            file_key = href.split("#", 1)[0].lower()
+            if file_key in seen_files:
+                continue
+            seen_files.add(file_key)
             try:
                 raw = item.get_content()
             except Exception:

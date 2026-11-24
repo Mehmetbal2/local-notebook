@@ -1246,7 +1246,7 @@ class ExportService:
             return
 
         text = re.sub(r'<br\s*/?>', '\n', text)
-        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'<[^<>]+>', '', text)  # [^<>]: linear even for a long run of '<'
 
         position = 0
         for match in self._INLINE_TOKEN_RE.finditer(text):

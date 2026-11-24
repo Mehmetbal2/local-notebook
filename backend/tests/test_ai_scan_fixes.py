@@ -192,6 +192,75 @@ class DataFolderPermissionTests(unittest.TestCase):
         self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
 
 
+class FourthRoundTests(unittest.TestCase):
+    def test_tag_stripping_is_linear(self):
+        import re
+        import time
+
+        start = time.perf_counter()
+        re.sub(r"<[^<>]+>", "", "<" * 200000)
+        self.assertLess(time.perf_counter() - start, 1.0)
+        source = open(os.path.join(BACKEND_DIR, "services", "export_service.py"), encoding="utf-8").read()
+        self.assertNotIn("re.sub(r'<[^>]+>', '', text)", source)
+
+    def test_epub_ids_pointing_to_one_file_are_read_once(self):
+        from workers.parsers.epub_parser import EpubParser
+
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        path = os.path.join(tmp, "alias.epub")
+        container = (
+            '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+            '</rootfiles></container>'
+        )
+        manifest = "".join(f'<item id="c{i}" href="c1.xhtml" media-type="application/xhtml+xml"/>' for i in range(300))
+        spine = "".join(f'<itemref idref="c{i}"/>' for i in range(300))
+        opf = (
+            '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier>'
+            '<dc:title>T</dc:title><dc:language>tr</dc:language></metadata>'
+            f'<manifest>{manifest}</manifest><spine>{spine}</spine></package>'
+        )
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("mimetype", "application/epub+zip")
+            archive.writestr("META-INF/container.xml", container)
+            archive.writestr("OEBPS/content.opf", opf)
+            archive.writestr("OEBPS/c1.xhtml", '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Tek bölüm metni.</p></body></html>')
+        try:
+            result = EpubParser()._parse_sync(path)
+        except ImportError:
+            self.skipTest("ebooklib is not installed")
+        self.assertEqual(len([b for b in result.blocks if "Tek bölüm" in (b.content or "")]), 1)
+
+    def test_long_user_names_do_not_grow_throttle_keys(self):
+        from utils.login_throttle import LoginThrottle
+
+        throttle = LoginThrottle(max_failures=3, max_per_address=50, window=60, max_per_user=10)
+        throttle.begin_attempt("1.2.3.4", "x" * 1_000_000)
+        self.assertTrue(all(len(key) < 200 for key in throttle._failures))
+
+    def test_overlong_login_is_refused_without_touching_the_throttle(self):
+        import httpx
+        from fastapi import FastAPI
+
+        from routes import auth_routes
+        from utils.login_throttle import login_throttle
+
+        app = FastAPI()
+        app.include_router(auth_routes.router, prefix="/api")
+        before = len(login_throttle._failures)
+
+        async def run():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await client.post("/api/auth/login", data={"username": "a" * 5000, "password": "x"})
+
+        response = asyncio.run(run())
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(len(login_throttle._failures), before)
+
+
 class HtmlTableScanTests(unittest.TestCase):
     def test_unclosed_tables_are_linear(self):
         import time

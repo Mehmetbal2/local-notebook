@@ -10,6 +10,7 @@ addresses. A successful sign-in clears the counter for that pair.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
@@ -38,14 +39,20 @@ class LoginThrottle:
         self._clock = clock
         self._failures: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
+        self._calls = 0
 
     @staticmethod
-    def _pair(address: str, username: str) -> str:
-        return f"{address}\x00{(username or '').strip().lower()}"
+    def _name(username: str) -> str:
+        # A fixed-size digest, so a long user name cannot make the keys themselves large.
+        return hashlib.sha256((username or "").strip().lower().encode("utf-8")).hexdigest()[:32]
 
-    @staticmethod
-    def _user(username: str) -> str:
-        return f"\x01user\x00{(username or '').strip().lower()}"
+    @classmethod
+    def _pair(cls, address: str, username: str) -> str:
+        return f"{address[:64]}\x00{cls._name(username)}"
+
+    @classmethod
+    def _user(cls, username: str) -> str:
+        return f"\x01user\x00{cls._name(username)}"
 
     def _limits(self, address: str, username: str):
         return (
@@ -86,14 +93,15 @@ class LoginThrottle:
         now = self._clock()
         with self._lock:
             waits = []
-            limits = self._limits(address, username)
+            limits = self._limits(address or "unknown", username)
             for key, limit in limits:
                 bucket = self._recent(key, now)
                 if len(bucket) >= limit:
                     waits.append(int(self.window - (now - bucket[0])) + 1)
             if waits:
                 return max(waits), None
-            if len(self._failures) > _MAX_TRACKED_KEYS:
+            self._calls += 1
+            if len(self._failures) > _MAX_TRACKED_KEYS or self._calls % 256 == 0:
                 for key in list(self._failures):
                     self._recent(key, now)
             for key, _ in limits:
