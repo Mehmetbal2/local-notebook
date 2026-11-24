@@ -60,6 +60,31 @@ class LoginThrottle:
                     waits.append(int(self.window - (now - bucket[0])) + 1)
             return max(waits, default=0)
 
+    def begin_attempt(self, address: str, username: str) -> tuple[int, float | None]:
+        """Check the limits and count this attempt in one step.
+
+        Returns (retry_after_seconds, None) when refused, or (0, stamp) when allowed.
+        The attempt counts as a failure from the start, so many requests sent at
+        the same moment cannot all slip past the limit while their passwords are
+        still being checked; `record_success(..., stamp)` takes it back.
+        """
+        now = self._clock()
+        with self._lock:
+            waits = []
+            pair = self._pair(address, username)
+            for key, limit in ((pair, self.max_failures), (address, self.max_per_address)):
+                bucket = self._recent(key, now)
+                if len(bucket) >= limit:
+                    waits.append(int(self.window - (now - bucket[0])) + 1)
+            if waits:
+                return max(waits), None
+            if len(self._failures) > _MAX_TRACKED_KEYS:
+                for key in list(self._failures):
+                    self._recent(key, now)
+            for key in (pair, address):
+                self._failures.setdefault(key, deque()).append(now)
+            return 0, now
+
     def record_failure(self, address: str, username: str) -> None:
         now = self._clock()
         with self._lock:
@@ -69,9 +94,19 @@ class LoginThrottle:
             for key in (self._pair(address, username), address):
                 self._failures.setdefault(key, deque()).append(now)
 
-    def record_success(self, address: str, username: str) -> None:
+    def record_success(self, address: str, username: str, stamp: float | None = None) -> None:
+        """Clear the user's failures from this address and take back the attempt's own count."""
         with self._lock:
             self._failures.pop(self._pair(address, username), None)
+            if stamp is not None:
+                bucket = self._failures.get(address)
+                if bucket:
+                    try:
+                        bucket.remove(stamp)
+                    except ValueError:
+                        pass
+                    if not bucket:
+                        self._failures.pop(address, None)
 
 
 login_throttle = LoginThrottle()

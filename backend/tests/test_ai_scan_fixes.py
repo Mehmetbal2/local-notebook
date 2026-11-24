@@ -120,6 +120,57 @@ class LoginThrottleTests(unittest.TestCase):
         self.assertEqual(throttle.retry_after("a", "u"), 0)
 
 
+class LoginRaceTests(unittest.TestCase):
+    def test_simultaneous_attempts_cannot_exceed_the_limit(self):
+        from utils.login_throttle import LoginThrottle
+
+        throttle = LoginThrottle(max_failures=5, max_per_address=50, window=60)
+        allowed = [throttle.begin_attempt("1.2.3.4", "admin") for _ in range(30)]
+        self.assertEqual(sum(1 for wait, _ in allowed if wait == 0), 5)
+
+    def test_success_does_not_count_against_the_address(self):
+        from utils.login_throttle import LoginThrottle
+
+        throttle = LoginThrottle(max_failures=3, max_per_address=3, window=60)
+        for user in ("a", "b", "c", "d", "e"):
+            wait, stamp = throttle.begin_attempt("10.0.0.1", user)
+            self.assertEqual(wait, 0)
+            throttle.record_success("10.0.0.1", user, stamp)
+
+
+class HtmlTableScanTests(unittest.TestCase):
+    def test_unclosed_tables_are_linear(self):
+        import time
+
+        from services.segment_service import _html_table_spans
+
+        start = time.perf_counter()
+        self.assertEqual(_html_table_spans("<table>" * 200000), [])
+        self.assertLess(time.perf_counter() - start, 1.0)
+        text = "a<TABLE border=1><tr><td>x</td></tr></table>b<table>c</table>"
+        self.assertEqual([text[s:e] for s, e in _html_table_spans(text)],
+                         ["<TABLE border=1><tr><td>x</td></tr></table>", "<table>c</table>"])
+
+
+class HtmlImageLimitTests(unittest.TestCase):
+    def test_repeated_local_image_is_copied_once_and_count_is_capped(self):
+        from workers.parsers.html_parser import HtmlParser
+
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        Path(tmp, "big.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 4096)
+        html = "<html><body>" + "".join(f'<p>p{i}</p><img src="big.png" alt="r{i}">' for i in range(400)) + "</body></html>"
+        doc = Path(tmp, "doc.html")
+        doc.write_text(html, encoding="utf-8")
+        try:
+            result = HtmlParser()._parse_sync(str(doc), "file-1")
+        except RuntimeError as exc:
+            self.skipTest(str(exc))
+        self.assertLessEqual(len(result.images), HtmlParser.MAX_IMAGES)
+        written = list(Path(tmp, "images", "file-1").glob("*"))
+        self.assertEqual(len(written), 1)
+
+
 class EpubSpineTests(unittest.TestCase):
     def test_repeated_spine_entries_are_read_once(self):
         from workers.parsers.epub_parser import EpubParser

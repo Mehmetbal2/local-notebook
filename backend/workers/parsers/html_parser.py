@@ -136,6 +136,8 @@ class HtmlParser(BaseParser):
         self._source_dir = path.parent
         self._image_dir = path.parent / "images" / file_id if file_id else None
         self._images: List[Dict[str, Any]] = []
+        self._image_bytes = 0
+        self._copied_images: Dict[Path, Path] = {}
 
         # Shamela exports use orphan </p> tags as separators (thousands of
         # closers for a handful of openers). Valid HTML keeps its <p> structure.
@@ -461,8 +463,14 @@ class HtmlParser(BaseParser):
             extra["image_caption"] = caption
         add(caption or "[Image]", "paragraph", extra)
 
+    # An HTML file can reference the same (possibly large) local image many times, or
+    # embed many images; these limits keep one document from filling the disk.
+    MAX_IMAGES = 300
+    MAX_IMAGE_BYTES = 25 * 1024 * 1024
+    MAX_TOTAL_IMAGE_BYTES = 200 * 1024 * 1024
+
     def _save_image(self, src: str) -> Optional[Path]:
-        if not src or self._image_dir is None:
+        if not src or self._image_dir is None or len(self._images) >= self.MAX_IMAGES:
             return None
 
         data_match = re.match(
@@ -497,15 +505,25 @@ class HtmlParser(BaseParser):
             ext = "jpg"
         if ext not in {"jpg", "png", "gif", "webp", "bmp"}:
             return None
+        if candidate in self._copied_images:
+            return self._copied_images[candidate]
         try:
+            if candidate.stat().st_size > self.MAX_IMAGE_BYTES:
+                return None
             raw = candidate.read_bytes()
         except OSError:
             return None
-        return self._write_image(raw, ext, prefix=candidate.stem)
+        saved = self._write_image(raw, ext, prefix=candidate.stem)
+        if saved is not None:
+            self._copied_images[candidate] = saved
+        return saved
 
     def _write_image(self, raw: bytes, ext: str, *, prefix: str) -> Optional[Path]:
         if not raw or self._image_dir is None:
             return None
+        if len(raw) > self.MAX_IMAGE_BYTES or self._image_bytes + len(raw) > self.MAX_TOTAL_IMAGE_BYTES:
+            return None
+        self._image_bytes += len(raw)
         safe_ext = re.sub(r"[^a-zA-Z0-9]", "", ext.lower()) or "jpg"
         safe_prefix = re.sub(r"[^a-zA-Z0-9_-]", "_", prefix)[:40] or "image"
         self._image_dir.mkdir(parents=True, exist_ok=True)

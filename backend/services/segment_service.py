@@ -3,6 +3,32 @@ from typing import List, Dict, Any
 from dataclasses import dataclass, field
 
 
+_TABLE_OPEN_RE = re.compile(r"<table(?=[\s>/])[^>]*>", re.IGNORECASE)
+
+
+def _html_table_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) of each `<table ...> ... </table>` in a single left-to-right pass.
+
+    The former regex `<table[^>]*>[\\s\\S]*?</table>` rescanned the rest of the text
+    from every opening tag, so a file full of unclosed `<table>` tags took
+    quadratic time. Once no closing tag is left, the search stops.
+    """
+    lowered = text.lower()
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    while True:
+        opening = _TABLE_OPEN_RE.search(text, pos)
+        if opening is None:
+            break
+        close = lowered.find("</table>", opening.end())
+        if close == -1:
+            break
+        end = close + len("</table>")
+        spans.append((opening.start(), end))
+        pos = end
+    return spans
+
+
 @dataclass
 class SegmentInfo:
     segment_index: int
@@ -190,12 +216,11 @@ class SegmentService:
                 'text': match.group(0)
             })
 
-        html_table_pattern = r'<table[^>]*>[\s\S]*?</table>'
-        for match in re.finditer(html_table_pattern, text, re.IGNORECASE):
+        for start, end in _html_table_spans(text):
             atomic_blocks.append({
-                'start': match.start(),
-                'end': match.end(),
-                'text': match.group(0)
+                'start': start,
+                'end': end,
+                'text': text[start:end]
             })
 
         atomic_blocks.sort(key=lambda x: x['start'])

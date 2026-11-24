@@ -31,7 +31,7 @@ def get_data_dir() -> Path:
         data_dir = _resolve_from_root(raw)
     else:
         data_dir = (PROJECT_ROOT / "local-notebook-data").resolve()
-    data_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)  # owner-only when created
     return data_dir
 
 
@@ -41,7 +41,7 @@ def get_upload_dir() -> Path:
         upload_dir = _resolve_from_root(raw)
     else:
         upload_dir = (get_data_dir() / "uploads").resolve()
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     return upload_dir
 
 

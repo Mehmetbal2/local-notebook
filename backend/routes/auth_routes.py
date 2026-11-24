@@ -68,7 +68,7 @@ async def login(
 ) -> dict:
     address = request.client.host if request.client else "unknown"
     username = form.username.strip()
-    wait = login_throttle.retry_after(address, username)
+    wait, attempt = login_throttle.begin_attempt(address, username)
     if wait:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -83,13 +83,12 @@ async def login(
         _check_password, form.password, user.password_hash if user else _DUMMY_PASSWORD_HASH
     )
     if not user or not ok:
-        login_throttle.record_failure(address, username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    login_throttle.record_success(address, username)
+    login_throttle.record_success(address, username, attempt)
 
     token_payload = token_payload_for(user)
     token = create_access_token(token_payload)

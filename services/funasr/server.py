@@ -43,7 +43,6 @@ os.environ.setdefault("HF_HOME", str(_MODELS_DIR / "huggingface"))
 os.environ.setdefault("TORCH_HOME", str(_MODELS_DIR / "torch"))
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s")
@@ -109,7 +108,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# No CORS: only the backend calls this service, never a browser.
 
 
 # ── Transcribe logic ──────────────────────────────────────────────────────────

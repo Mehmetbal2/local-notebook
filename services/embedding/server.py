@@ -24,8 +24,10 @@ os.environ.setdefault("HF_HOME", str(_MODELS_DIR / "huggingface"))
 os.environ.setdefault("TORCH_HOME", str(_MODELS_DIR / "torch"))
 
 import torch
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -87,7 +89,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# No CORS: only the backend calls this service, never a browser. Without CORS headers a
+# web page the user happens to visit cannot read from it or send it JSON requests.
+MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_MB", "20")) * 1024 * 1024
+# One encoding at a time; further requests wait instead of piling up in memory.
+_encode_lock = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_REQUESTS", "1")))
+
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    """Refuse oversized bodies before they are read and parsed."""
+    declared = request.headers.get("content-length")
+    if request.method in ("POST", "PUT", "PATCH"):
+        if declared is None or not declared.isdigit():
+            return JSONResponse({"detail": "Content-Length required"}, status_code=411)
+        if int(declared) > MAX_REQUEST_BYTES:
+            return JSONResponse({"detail": "request too large"}, status_code=413)
+    return await call_next(request)
 
 
 # ── Schemas (OpenAI compatible) ───────────────────────────────────────────────
@@ -143,17 +161,17 @@ async def create_embeddings(req: EmbeddingRequest) -> EmbeddingResponse:
         raise HTTPException(status_code=413, detail=f"each input may have at most {MAX_INPUT_CHARS} characters")
 
     # Batch encode — run in sync (sentence-transformers releases the GIL)
-    import asyncio
-    loop = asyncio.get_event_loop()
-    vectors = await loop.run_in_executor(
-        None,
-        lambda: model.encode(
-            texts,
-            batch_size=MAX_BATCH,
-            show_progress_bar=False,
-            normalize_embeddings=True,
-        ).tolist(),
-    )
+    loop = asyncio.get_running_loop()
+    async with _encode_lock:
+        vectors = await loop.run_in_executor(
+            None,
+            lambda: model.encode(
+                texts,
+                batch_size=MAX_BATCH,
+                show_progress_bar=False,
+                normalize_embeddings=True,
+            ).tolist(),
+        )
 
     token_count = sum(len(t.split()) for t in texts)   # rough estimate
 

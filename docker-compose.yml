@@ -85,8 +85,9 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/local_notebook.db
       - MILVUS_URI=http://milvus:19530
       - UPLOAD_DIR=/app/data/uploads
-      # Requests reach the backend through the frontend's nginx, which sets X-Forwarded-For;
-      # trusting it gives the sign-in limiter each user's real address.
+      # Requests reach the backend through the frontend's nginx, which replaces any
+      # X-Forwarded-For with the real client address; trusting it gives the sign-in
+      # limiter each user's own address.
       - FORWARDED_ALLOW_IPS=*
     volumes:
       - ${LOCAL_NOTEBOOK_DATA_DIR:-./local-notebook-data}:/app/data

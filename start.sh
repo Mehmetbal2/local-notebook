@@ -35,6 +35,9 @@ MODELS_DIR="$DATA_DIR/models"
 mkdir -p "$DATA_DIR" "$UPLOAD_DIR" "$LOG_DIR" "$RUN_DIR" \
          "$MODELS_DIR/huggingface" "$MODELS_DIR/modelscope" "$MODELS_DIR/torch" \
          "$PROJECT_ROOT/.cache/uv" "$PROJECT_ROOT/.cache/pip" "$PROJECT_ROOT/.cache/npm"
+# The data folder holds the database (with API keys), uploads and backups: only this
+# user may open it. A folder without access for others hides everything inside it.
+chmod 700 "$DATA_DIR" "$UPLOAD_DIR" 2>/dev/null || true
 
 export LOCAL_NOTEBOOK_DATA_DIR="$DATA_DIR"
 export UPLOAD_DIR="$UPLOAD_DIR"
