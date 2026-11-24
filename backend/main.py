@@ -7,6 +7,9 @@ from pathlib import Path
 os.environ.setdefault("GRPC_DNS_RESOLVER", "native")
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
+# Files the backend creates (database, uploads, backups, exports) are readable by
+# this user only; other accounts on the machine cannot open them.
+os.umask(0o077)
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if _BACKEND_DIR not in sys.path:

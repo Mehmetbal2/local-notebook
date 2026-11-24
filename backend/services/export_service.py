@@ -1198,6 +1198,9 @@ class ExportService:
             except Exception:
                 pass
 
+    MAX_TABLE_COLUMNS = 50
+    MAX_TABLE_CELLS = 20000
+
     def _add_markdown_table(self, doc, table_lines: List[str], resolve_footnote_number) -> None:
         from docx.shared import Pt
 
@@ -1213,6 +1216,13 @@ class ExportService:
             return
 
         column_count = max(len(row) for row in rows)
+        # A table cell costs memory and time in python-docx; one very wide row in a long
+        # table (e.g. from a pasted session title) would otherwise mean millions of cells.
+        if column_count > self.MAX_TABLE_COLUMNS or column_count * len(rows) > self.MAX_TABLE_CELLS:
+            for row_data in rows:
+                paragraph = doc.add_paragraph()
+                self._add_inline_runs(paragraph, " | ".join(row_data), resolve_footnote_number)
+            return
         table = doc.add_table(rows=len(rows), cols=column_count)
         table.style = 'Table Grid'
 

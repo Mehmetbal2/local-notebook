@@ -25,6 +25,28 @@ def safe_join(base: str | Path, *parts: str) -> Path:
     return Path(candidate)
 
 
+_restricted: set[str] = set()
+
+
+def _restrict_once(directory: Path) -> None:
+    """Make a data folder owner-only (700), however it was created.
+
+    The database (with API keys), uploads and backups live here. A folder that
+    Docker or a file manager created is usually readable by every local user;
+    closing it hides everything inside. Only done for folders this process owns.
+    """
+    key = str(directory)
+    if key in _restricted:
+        return
+    _restricted.add(key)
+    try:
+        info = directory.stat()
+        if hasattr(os, "getuid") and info.st_uid == os.getuid() and info.st_mode & 0o077:
+            directory.chmod(0o700)
+    except OSError:
+        pass
+
+
 def get_data_dir() -> Path:
     raw = os.getenv("LOCAL_NOTEBOOK_DATA_DIR", "").strip()
     if raw:
@@ -32,6 +54,7 @@ def get_data_dir() -> Path:
     else:
         data_dir = (PROJECT_ROOT / "local-notebook-data").resolve()
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)  # owner-only when created
+    _restrict_once(data_dir)
     return data_dir
 
 
@@ -42,6 +65,7 @@ def get_upload_dir() -> Path:
     else:
         upload_dir = (get_data_dir() / "uploads").resolve()
     upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _restrict_once(upload_dir)
     return upload_dir
 
 

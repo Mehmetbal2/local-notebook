@@ -3,8 +3,9 @@
 Each failed password for the same user name from the same address counts
 against that pair; after LOGIN_MAX_FAILURES failures within the window, further
 attempts are refused with 429 until the window passes. A looser per-address
-limit stops one client from trying many user names. A successful sign-in clears
-the counter for that pair.
+limit stops one client from trying many user names, and a per-user-name limit
+that ignores the address stops guessing one account from many (or spoofed)
+addresses. A successful sign-in clears the counter for that pair.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from collections import deque
 
 LOGIN_MAX_FAILURES = max(1, int(os.getenv("LOGIN_MAX_FAILURES", "10")))
 LOGIN_MAX_FAILURES_PER_ADDRESS = max(LOGIN_MAX_FAILURES, int(os.getenv("LOGIN_MAX_FAILURES_PER_ADDRESS", "50")))
+LOGIN_MAX_FAILURES_PER_USER = max(LOGIN_MAX_FAILURES, int(os.getenv("LOGIN_MAX_FAILURES_PER_USER", "30")))
 LOGIN_WINDOW_SECONDS = max(1, int(os.getenv("LOGIN_WINDOW_SECONDS", "900")))
 _MAX_TRACKED_KEYS = 10000
 
@@ -27,9 +29,11 @@ class LoginThrottle:
         max_per_address: int = LOGIN_MAX_FAILURES_PER_ADDRESS,
         window: int = LOGIN_WINDOW_SECONDS,
         clock=time.monotonic,
+        max_per_user: int | None = None,
     ):
         self.max_failures = max_failures
         self.max_per_address = max_per_address
+        self.max_per_user = max(max_failures, max_per_user if max_per_user is not None else LOGIN_MAX_FAILURES_PER_USER)
         self.window = window
         self._clock = clock
         self._failures: dict[str, deque[float]] = {}
@@ -38,6 +42,17 @@ class LoginThrottle:
     @staticmethod
     def _pair(address: str, username: str) -> str:
         return f"{address}\x00{(username or '').strip().lower()}"
+
+    @staticmethod
+    def _user(username: str) -> str:
+        return f"\x01user\x00{(username or '').strip().lower()}"
+
+    def _limits(self, address: str, username: str):
+        return (
+            (self._pair(address, username), self.max_failures),
+            (address, self.max_per_address),
+            (self._user(username), self.max_per_user),
+        )
 
     def _recent(self, key: str, now: float) -> deque[float]:
         bucket = self._failures.get(key)
@@ -54,7 +69,7 @@ class LoginThrottle:
         now = self._clock()
         with self._lock:
             waits = []
-            for key, limit in ((self._pair(address, username), self.max_failures), (address, self.max_per_address)):
+            for key, limit in self._limits(address, username):
                 bucket = self._recent(key, now)
                 if len(bucket) >= limit:
                     waits.append(int(self.window - (now - bucket[0])) + 1)
@@ -71,8 +86,8 @@ class LoginThrottle:
         now = self._clock()
         with self._lock:
             waits = []
-            pair = self._pair(address, username)
-            for key, limit in ((pair, self.max_failures), (address, self.max_per_address)):
+            limits = self._limits(address, username)
+            for key, limit in limits:
                 bucket = self._recent(key, now)
                 if len(bucket) >= limit:
                     waits.append(int(self.window - (now - bucket[0])) + 1)
@@ -81,7 +96,7 @@ class LoginThrottle:
             if len(self._failures) > _MAX_TRACKED_KEYS:
                 for key in list(self._failures):
                     self._recent(key, now)
-            for key in (pair, address):
+            for key, _ in limits:
                 self._failures.setdefault(key, deque()).append(now)
             return 0, now
 
@@ -91,7 +106,7 @@ class LoginThrottle:
             if len(self._failures) > _MAX_TRACKED_KEYS:
                 for key in list(self._failures):
                     self._recent(key, now)
-            for key in (self._pair(address, username), address):
+            for key, _ in self._limits(address, username):
                 self._failures.setdefault(key, deque()).append(now)
 
     def record_success(self, address: str, username: str, stamp: float | None = None) -> None:
@@ -99,14 +114,15 @@ class LoginThrottle:
         with self._lock:
             self._failures.pop(self._pair(address, username), None)
             if stamp is not None:
-                bucket = self._failures.get(address)
-                if bucket:
-                    try:
-                        bucket.remove(stamp)
-                    except ValueError:
-                        pass
-                    if not bucket:
-                        self._failures.pop(address, None)
+                for key in (address, self._user(username)):
+                    bucket = self._failures.get(key)
+                    if bucket:
+                        try:
+                            bucket.remove(stamp)
+                        except ValueError:
+                            pass
+                        if not bucket:
+                            self._failures.pop(key, None)
 
 
 login_throttle = LoginThrottle()

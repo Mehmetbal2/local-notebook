@@ -138,6 +138,60 @@ class LoginRaceTests(unittest.TestCase):
             throttle.record_success("10.0.0.1", user, stamp)
 
 
+class LoginPerUserTests(unittest.TestCase):
+    def test_spoofed_addresses_do_not_bypass_the_per_user_limit(self):
+        from utils.login_throttle import LoginThrottle
+
+        throttle = LoginThrottle(max_failures=3, max_per_address=50, window=60, max_per_user=10)
+        allowed = sum(1 for i in range(100) if throttle.begin_attempt(f"10.0.{i}.1", "admin")[0] == 0)
+        self.assertEqual(allowed, 10)
+        self.assertEqual(throttle.begin_attempt("10.9.9.9", "ayse")[0], 0)
+
+
+class SegmentBlockLookupTests(unittest.TestCase):
+    def test_many_blocks_are_matched_quickly_and_correctly(self):
+        import time
+
+        from services.segment_service import segment_service
+
+        blocks = [{"pos_start": i * 351, "pos_end": i * 351 + 350, "block_id": f"b{i}"} for i in range(60000)]
+        start = time.perf_counter()
+        for pos in range(0, 60000 * 351, 351):
+            segment_service._find_block_ids(blocks, pos, pos + 400)
+        self.assertLess(time.perf_counter() - start, 3.0)
+        self.assertEqual(segment_service._find_block_ids(blocks, 340, 360), ["b0", "b1"])
+        shuffled = list(reversed(blocks[:5]))
+        self.assertEqual(segment_service._find_block_ids(shuffled, 340, 360), ["b1", "b0"])
+
+
+class DocxTableLimitTests(unittest.TestCase):
+    def test_huge_table_is_written_as_text(self):
+        import docx
+
+        from services.export_service import ExportService
+
+        document = docx.Document()
+        lines = ["|" + "|".join(["x"] * 5000) + "|"] + ["|a|"] * 2000
+        ExportService()._add_markdown_table(document, lines, lambda *args: None)
+        self.assertEqual(len(document.tables), 0)
+        small = docx.Document()
+        ExportService()._add_markdown_table(small, ["|a|b|", "|---|---|", "|1|2|"], lambda *args: None)
+        self.assertEqual(len(small.tables), 1)
+
+
+class DataFolderPermissionTests(unittest.TestCase):
+    def test_existing_world_readable_folder_is_closed(self):
+        import paths
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        folder = tmp / "data"
+        folder.mkdir(mode=0o755)
+        folder.chmod(0o755)
+        paths._restrict_once(folder)
+        self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+
+
 class HtmlTableScanTests(unittest.TestCase):
     def test_unclosed_tables_are_linear(self):
         import time

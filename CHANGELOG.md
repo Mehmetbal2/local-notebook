@@ -29,7 +29,9 @@ Bu projedeki önemli değişiklikler bu dosyada tutulur. Sürüm numaraları [An
 - PDF'lerde aynı görsel çok sayıda sayfada kullanılsa da diske bir kez yazılır; belge başına görsel sayısı (1000) ve toplam boyut (500 MB) sınırlandı. Web atıf ipuçlarındaki simgeler ve bağlantı stilleri de başka sitelerden içerik yükleyemez.
 - HTML belgelerinde aynı yerel görselin tekrar tekrar kopyalanması ve görsel sayısı/boyutu sınırlandı; düz metinde kapanmayan `<table>` etiketleri artık işlemeyi yavaşlatmaz.
 - Yerel gömme ve ses servislerinden CORS kaldırıldı ve tarayıcıdan gelen istekler (Origin başlığı taşıyanlar) reddedilir; bir web sayfası bu servisleri kullanamaz. Gömme servisi yalnızca JSON kabul eder. Gömme servisi büyük istekleri okumadan reddeder ve aynı anda tek hesaplama yapar.
-- Veri klasörü (`local-notebook-data`) yalnızca sahibinin erişebileceği izinlerle (700) tutulur.
+- Veri klasörü (`local-notebook-data`) yalnızca sahibinin erişebileceği izinlerle (700) tutulur; arka uç (Docker dahil) klasörü açılışta kapatır ve oluşturduğu dosyaları yalnızca sahibine açık yazar.
+- Bir kullanıcı adı için, adresten bağımsız olarak 15 dakikada en fazla 30 hatalı giriş denemesi yapılabilir (sahte adreslerle sınır atlatılamaz).
+- Çok sayıda paragraf içeren belgelerin parçalanması artık doğrusal sürede tamamlanır; DOCX dışa aktarımında aşırı büyük tablolar düz metin olarak yazılır.
 - Ayarlardaki servis adresleri (kaydederken ve bağlantı testinde) yalnızca `http://` veya `https://` olabilir; içine kullanıcı adı/şifre yazılmış adresler reddedilir. Bağlantı testleri karşı sunucunun ham yanıtını artık göstermez, yalnızca durum kodunu ve servisin kendi hata mesajını gösterir.
 - Sohbet ve bağlantı testi hataları kullanıcıya hatanın türüyle (zaman aşımı, bağlantı, API anahtarı, kota, bağlam penceresi…) bildirilir; ayrıntılar yalnızca sunucu günlüğünde kalır. Kimlik doğrulamasız `/health/redis` uç noktası hata metni döndürmez.
 

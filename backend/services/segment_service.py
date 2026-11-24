@@ -1,4 +1,6 @@
+import bisect
 import re
+import threading
 from typing import List, Dict, Any
 from dataclasses import dataclass, field
 
@@ -45,6 +47,9 @@ class SplitResult:
 
 
 class SegmentService:
+    # Per-thread cache of the block index for the document being segmented.
+    _index_cache = threading.local()
+
 
     OVERFLOW_RATIO = 1.2
 
@@ -282,20 +287,41 @@ class SegmentService:
 
         return sentences
 
+    @staticmethod
+    def _block_span(block: Dict[str, Any]) -> tuple:
+        start = block.get('pos_start', block.get('position', {}).get('start', 0))
+        end = block.get('pos_end', block.get('position', {}).get('end', 0))
+        return start, end, block.get('block_id', block.get('id', ''))
+
+    def _block_index(self, blocks: List[Dict[str, Any]]):
+        """Spans of `blocks`, built once per list (each segment used to rescan every block)."""
+        cached = getattr(self._index_cache, "value", None)
+        if cached is not None and cached[0] is blocks and cached[1] == len(blocks):
+            return cached[2]
+        spans = [self._block_span(block) for block in blocks]
+        starts = [span[0] for span in spans]
+        ends = [span[1] for span in spans]
+        ordered = all(starts[i] <= starts[i + 1] and ends[i] <= ends[i + 1] for i in range(len(spans) - 1))
+        index = (spans, starts, ends, ordered)
+        self._index_cache.value = (blocks, len(blocks), index)
+        return index
+
     def _find_block_ids(
         self,
         blocks: List[Dict[str, Any]],
         start_pos: int,
         end_pos: int
     ) -> List[str]:
-        block_ids = []
-        for block in blocks:
-            block_start = block.get('pos_start', block.get('position', {}).get('start', 0))
-            block_end = block.get('pos_end', block.get('position', {}).get('end', 0))
-            block_id = block.get('block_id', block.get('id', ''))
-            if block_start < end_pos and block_end > start_pos:
-                block_ids.append(block_id)
-        return block_ids
+        """Ids of the blocks overlapping [start_pos, end_pos), in document order."""
+        spans, starts, ends, ordered = self._block_index(blocks)
+        if ordered:
+            # Blocks come in reading order, so the overlapping ones form one contiguous
+            # run that two binary searches find (linear time over the whole document).
+            first = bisect.bisect_right(ends, start_pos)
+            last = bisect.bisect_left(starts, end_pos)
+            return [spans[i][2] for i in range(first, last) if spans[i][0] < end_pos and spans[i][1] > start_pos]
+        return [block_id for block_start, block_end, block_id in spans
+                if block_start < end_pos and block_end > start_pos]
 
 
 segment_service = SegmentService()
