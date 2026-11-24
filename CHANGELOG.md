@@ -25,9 +25,9 @@ Bu projedeki önemli değişiklikler bu dosyada tutulur. Sürüm numaraları [An
 - EPUB'ta aynı bölümün tekrar tekrar listelenmesiyle bellek tüketimi engellendi.
 - `start.sh` API'yi yalnızca bu bilgisayarda dinletir (`BACKEND_HOST`); yerel gömme ve ses servisleri de varsayılan olarak `127.0.0.1` üzerinde çalışır ve istek boyutlarını sınırlar.
 - Giriş deneme sınırı aynı anda gönderilen isteklerle aşılamaz; Docker'daki nginx istemcinin gönderdiği `X-Forwarded-For` başlığını yok sayar (sahte adreslerle sınır atlatılamaz).
-- Model yanıtlarındaki görseller ve stiller başka sitelerden içerik yükleyemez; yönlendirilmiş bir yanıt kaynak metnini görsel adresiyle dışarı sızdıramaz.
+- Model yanıtlarındaki görseller ve stiller başka sitelerden içerik yükleyemez (CSS kaçış karakterleriyle gizlenmiş adresler dahil); yönlendirilmiş bir yanıt kaynak metnini görsel adresiyle dışarı sızdıramaz.
 - HTML belgelerinde aynı yerel görselin tekrar tekrar kopyalanması ve görsel sayısı/boyutu sınırlandı; düz metinde kapanmayan `<table>` etiketleri artık işlemeyi yavaşlatmaz.
-- Yerel gömme ve ses servislerinden CORS kaldırıldı; tarayıcıdaki bir web sayfası bu servisleri kullanamaz. Gömme servisi büyük istekleri okumadan reddeder ve aynı anda tek hesaplama yapar.
+- Yerel gömme ve ses servislerinden CORS kaldırıldı ve tarayıcıdan gelen istekler (Origin başlığı taşıyanlar) reddedilir; bir web sayfası bu servisleri kullanamaz. Gömme servisi yalnızca JSON kabul eder. Gömme servisi büyük istekleri okumadan reddeder ve aynı anda tek hesaplama yapar.
 - Veri klasörü (`local-notebook-data`) yalnızca sahibinin erişebileceği izinlerle (700) tutulur.
 - Sohbet ve bağlantı testi hataları kullanıcıya hatanın türüyle (zaman aşımı, bağlantı, API anahtarı, kota, bağlam penceresi…) bildirilir; ayrıntılar yalnızca sunucu günlüğünde kalır. Kimlik doğrulamasız `/health/redis` uç noktası hata metni döndürmez.
 

@@ -111,6 +111,17 @@ app = FastAPI(
 # No CORS: only the backend calls this service, never a browser.
 
 
+@app.middleware("http")
+async def refuse_browser_requests(request, call_next):
+    """A web page can send a multipart upload here without a CORS preflight, but the
+    browser always adds an Origin header; the backend's own client never does."""
+    from fastapi.responses import JSONResponse
+
+    if request.headers.get("origin") is not None or request.headers.get("sec-fetch-site") not in (None, "same-origin", "none"):
+        return JSONResponse({"detail": "browser requests are not accepted"}, status_code=403)
+    return await call_next(request)
+
+
 # ── Transcribe logic ──────────────────────────────────────────────────────────
 
 def _transcribe(audio_path: str, hotword: Optional[str]) -> TranscribeResponse:

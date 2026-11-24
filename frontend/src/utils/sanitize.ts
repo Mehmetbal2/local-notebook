@@ -37,6 +37,25 @@ function isCrossOriginFetch(value: string): boolean {
   }
 }
 
+// CSS functions that make the browser fetch something.
+const CSS_FETCH = /(?:url|image-set|image|cross-fade|element|src)\s*\(|@import/i
+
+/**
+ * True when an inline style could load a resource. CSS escapes (`\75rl(` is
+ * `url(`) and comments hide the function name from a plain text search, so a
+ * style with escapes or comments is refused outright, and every declaration is
+ * also read back as the browser parsed it.
+ */
+function loadsExternalResource(element: HTMLElement, style: string): boolean {
+  if (/\\|\/\*/.test(style) || CSS_FETCH.test(style)) return true
+  const declarations = element.style
+  for (let i = 0; i < declarations.length; i++) {
+    const property = declarations.item(i)
+    if (CSS_FETCH.test(declarations.getPropertyValue(property))) return true
+  }
+  return false
+}
+
 function configure() {
   if (configured) return
   configured = true
@@ -53,7 +72,7 @@ function configure() {
       if (value !== null && (name === 'srcset' || isCrossOriginFetch(value))) node.removeAttribute(name)
     }
     const style = node.getAttribute('style')
-    if (style && /url\s*\(|image-set\s*\(|@import/i.test(style)) node.removeAttribute('style')
+    if (style && loadsExternalResource(node as HTMLElement, style)) node.removeAttribute('style')
   })
 }
 

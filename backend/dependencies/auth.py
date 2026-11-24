@@ -25,11 +25,11 @@ _INSECURE_SECRET_KEYS = {
     "please-change-this-in-production",
 }
 # A configured key shorter than this is treated like a placeholder.
-_MIN_SECRET_KEY_LENGTH = 32
+_MIN_SIGNING_KEY_LENGTH = 32
 
 
 def _is_usable_secret_key(value: str) -> bool:
-    return len(value) >= _MIN_SECRET_KEY_LENGTH and value not in _INSECURE_SECRET_KEYS
+    return len(value) >= _MIN_SIGNING_KEY_LENGTH and value not in _INSECURE_SECRET_KEYS
 
 
 def _load_or_create_secret_key() -> str:
@@ -43,8 +43,7 @@ def _load_or_create_secret_key() -> str:
         return env_value
     if env_value:
         logger.warning(
-            "Ignoring SECRET_KEY from the environment: it is a known placeholder or shorter than %d characters.",
-            _MIN_SECRET_KEY_LENGTH,
+            "Ignoring the configured signing key: it is a known placeholder or too short (minimum 32 characters)."
         )
 
     from paths import get_data_dir

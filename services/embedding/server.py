@@ -98,9 +98,18 @@ _encode_lock = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_REQUESTS", "1")))
 
 @app.middleware("http")
 async def limit_request_size(request: Request, call_next):
-    """Refuse oversized bodies before they are read and parsed."""
+    """Refuse browser requests and oversized bodies before they are read and parsed.
+
+    Browsers add an Origin header to every cross-site POST, even a "simple" one
+    that needs no CORS preflight (for example JSON sent as a Blob without a
+    Content-Type); the backend's own client never sends one.
+    """
+    if request.headers.get("origin") is not None or request.headers.get("sec-fetch-site") not in (None, "same-origin", "none"):
+        return JSONResponse({"detail": "browser requests are not accepted"}, status_code=403)
     declared = request.headers.get("content-length")
     if request.method in ("POST", "PUT", "PATCH"):
+        if not (request.headers.get("content-type") or "").lower().startswith("application/json"):
+            return JSONResponse({"detail": "Content-Type must be application/json"}, status_code=415)
         if declared is None or not declared.isdigit():
             return JSONResponse({"detail": "Content-Length required"}, status_code=411)
         if int(declared) > MAX_REQUEST_BYTES:
