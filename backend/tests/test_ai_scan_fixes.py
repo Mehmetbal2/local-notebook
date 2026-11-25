@@ -261,6 +261,40 @@ class FourthRoundTests(unittest.TestCase):
         self.assertEqual(len(login_throttle._failures), before)
 
 
+class FifthRoundTests(unittest.TestCase):
+    def test_inline_markdown_regex_is_linear_on_unclosed_brackets(self):
+        import time
+
+        from services.export_service import ExportService
+
+        regex = ExportService._INLINE_TOKEN_RE
+        for payload in ("[" * 50000, "[a" * 25000, "[^" * 25000, "[x](" * 12000):
+            start = time.perf_counter()
+            list(regex.finditer(payload))
+            self.assertLess(time.perf_counter() - start, 0.5, payload[:4])
+        tokens = [m.group(0) for m in regex.finditer("Bkz. [kaynak](https://ex.org/a) ve [^1] **kalın**")]
+        self.assertEqual(tokens, ["[kaynak](https://ex.org/a)", "[^1]", "**kalın**"])
+
+    def test_oversized_pdf_image_is_not_decoded(self):
+        from workers.parsers.pymupdf_parser import PyMuPDFParser
+
+        doc = mock.Mock()
+        doc.xref_get_key.side_effect = lambda xref, key: ("int", "100000" if key == "Width" else "100000")
+        self.assertFalse(PyMuPDFParser._image_size_ok(doc, 5, {"width": 100000, "height": 100000}))
+        doc.xref_get_key.side_effect = lambda xref, key: ("int", "1200" if key == "Width" else "800")
+        self.assertTrue(PyMuPDFParser._image_size_ok(doc, 5, {"width": 1200, "height": 800}))
+
+    def test_docker_stack_does_not_publish_redis_or_milvus(self):
+        import re
+
+        text = open(os.path.join(BACKEND_DIR, "..", "docker-compose.yml"), encoding="utf-8").read()
+        services = dict(re.findall(r"^  ([a-z][\w-]*):\n((?:(?:    .*|\s*)\n)*)", text, re.M))
+        for name in ("redis", "milvus"):
+            block = "\n".join(line for line in services[name].splitlines() if not line.strip().startswith("#"))
+            self.assertNotIn("ports:", block, name)
+        self.assertIn("ports:", services["backend"])
+
+
 class HtmlTableScanTests(unittest.TestCase):
     def test_unclosed_tables_are_linear(self):
         import time

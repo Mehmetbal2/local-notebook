@@ -92,7 +92,7 @@ never disagree; `EMBEDDING_PORT` (default `8001`) is used only when nothing is s
 | Mode | How | Characteristics |
 |---|---|---|
 | **Lite (default)** | `MILVUS_URI=./local-notebook-data/milvus.db` | Zero dependencies, single process, `IVF_FLAT` index, no scalar indexes |
-| **Server** | `MILVUS_URI=http://localhost:19530` (see `docker-compose.yml`) | Multi-process, `IVF_PQ` + inverted filter indexes, scales to millions of vectors |
+| **Server** | `MILVUS_URI=http://milvus:19530` inside the Docker stack (see `docker-compose.yml`; the port is not published on the host by default) | Multi-process, `IVF_PQ` + inverted filter indexes, scales to millions of vectors |
 
 Switch to the server when you need multiple worker processes, hundreds of thousands of
 segments or more, or when filtered queries get slow. A backup taken in Lite mode contains

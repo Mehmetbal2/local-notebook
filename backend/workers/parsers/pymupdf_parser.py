@@ -32,6 +32,9 @@ _MIN_IMAGE_AREA_RATIO = 0.004  # of the page area; filters bullets, rules, logos
 # cannot fill the disk.
 _MAX_IMAGES_PER_DOCUMENT = 1000
 _MAX_IMAGE_BYTES_PER_DOCUMENT = 500 * 1024 * 1024
+# Decoded size is checked from the image's declared width and height before PyMuPDF
+# decodes it: a few kilobytes of compressed data can declare gigabytes of pixels.
+_MAX_IMAGE_PIXELS = 40_000_000  # e.g. 8000 x 5000
 _MIN_TEXT_CHARS_PER_PAGE = 40  # below this on average the PDF is treated as scanned
 
 
@@ -432,6 +435,24 @@ class PyMuPDFParser:
 
     # ---------- images ----------
 
+
+    @staticmethod
+    def _image_size_ok(doc, xref: int, info: Dict[str, Any]) -> bool:
+        """True when the image's declared pixel count is within _MAX_IMAGE_PIXELS."""
+        def as_int(value) -> int:
+            try:
+                return int(str(value).strip().split()[0])
+            except (TypeError, ValueError, IndexError):
+                return 0
+
+        width = as_int(info.get("width"))
+        height = as_int(info.get("height"))
+        try:
+            width = max(width, as_int(doc.xref_get_key(xref, "Width")[1]))
+            height = max(height, as_int(doc.xref_get_key(xref, "Height")[1]))
+        except Exception:
+            pass
+        return 0 < width * height <= _MAX_IMAGE_PIXELS
     def _extract_images(self, doc, page, page_no: int, width: float, height: float, images: List[Dict[str, Any]]):
         blocks: List[Tuple[float, Block]] = []
         if self.image_dir is None:
@@ -452,6 +473,9 @@ class PyMuPDFParser:
             seen_xrefs.add(xref)
             if len(images) >= _MAX_IMAGES_PER_DOCUMENT:
                 break
+            if not self._image_size_ok(doc, xref, info):
+                logger.info("image %s on page %d skipped: too many pixels", xref, page_no)
+                continue
             index = len(images)
             saved = getattr(self, "_saved_xrefs", {}).get(xref)
             if saved is not None:

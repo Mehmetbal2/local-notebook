@@ -48,7 +48,7 @@ Local Notebook **tek bir bilgisayarda veya güvenilen bir yerel ağda** çalış
 - **Oturumlar:** Şifre değiştiğinde veya yönetici tarafından sıfırlandığında o kullanıcının eski bütün oturumları (erişim ve yenileme anahtarları) hemen geçersiz olur.
 - **Web'den indirme:** Web kaynağı içe aktarma ve web araması yalnızca genel internetteki adreslere gider; yerel ağ, sunucunun kendisi ve bulut meta veri adresleri (yönlendirmeler dahil) engellenir.
 - **Yüklemeler:** Dosya gövdesi okunmadan önce geçerli oturum ve boyut sınırı (`MAX_UPLOAD_MB`) denetlenir; açıldığında aşırı büyüyen EPUB/DOCX arşivleri işlenmez.
-- **Docker:** Redis ve Milvus yalnızca `127.0.0.1` üzerinden yayınlanır.
+- **Docker:** Redis ve Milvus bilgisayarda hiçbir porttan yayınlanmaz; yalnızca yığının kendi kapsayıcıları erişebilir.
 - **Giriş denemeleri:** Aynı kullanıcı adı ve adres için art arda hatalı şifre denemeleri sınırlanır (varsayılan 15 dakikada 10).
 - **Önizleme bağlantıları:** Görsel ve ses adreslerinde oturum anahtarı değil, yalnızca önizlemeleri açabilen kısa ömürlü bir anahtar bulunur.
 - **Arayüz güvenliği:** Model yanıtları ve belge içerikleri DOMPurify ile temizlenerek gösterilir.
@@ -112,7 +112,7 @@ Local Notebook is designed to run **on one computer or a trusted local network**
 - Changing or resetting a password immediately revokes all of that user's earlier access and refresh tokens.
 - Web-source import and web search fetch only public internet addresses; loopback, private networks and cloud metadata endpoints are blocked, including through redirects.
 - Uploads: a valid session and the size limit (`MAX_UPLOAD_MB`) are checked before the body is read; EPUB/DOCX archives that would expand to an unreasonable size are refused.
-- Docker: Redis and Milvus are published on `127.0.0.1` only.
+- Docker: Redis and Milvus are not published on the host; only the stack's own containers can reach them.
 - Repeated failed sign-ins for the same user name and address are limited (10 per 15 minutes by default).
 - Image and audio URLs carry a short-lived, preview-only token, never the session token.
 - Model output and document content are cleaned with DOMPurify before display.

@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 
 from workers.parsers.base import BaseParser, Block, ParseResult
 from services.vlm_client import describe_image
+from utils.errors import error_kind, public_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +29,15 @@ class ImageParser(BaseParser):
             logger.info(f"Image description generated, length={len(description)}, model={vlm_model}")
         except Exception as e:
             logger.error(f"Failed to describe image: {e}")
-            error_msg = f"[Image description generation failed: {str(e)}]"
+            # Provider error text can carry internal details; the document gets only its kind.
+            error_msg = f"[Image description generation failed: {public_error_message(e)}]"
             block = Block(
                 id="b_0",
                 type="paragraph",
                 content=error_msg,
                 position={"start": 0, "end": len(error_msg)},
                 page=1,
-                extra={"is_image": True, "error": str(e)},
+                extra={"is_image": True, "error": error_kind(e)},
             )
             return ParseResult(
                 text=error_msg,

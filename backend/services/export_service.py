@@ -963,8 +963,10 @@ class ExportService:
 
     _INLINE_TOKEN_RE = re.compile(
         r'(\*\*.+?\*\*|__.+?__|~~.+?~~|`[^`\n]+?`'
-        r'|\[[^\]\n]+\]\([^)\n]+\)|\[\^[^\]\n]+\]|\*[^*\n]+?\*|_[^_\n]+?_)'
+        r'|\[[^\[\]\n]+\]\([^()\n]+\)|\[\^[^\[\]\n]+\]|\*[^*\n]+?\*|_[^_\n]+?_)'
     )
+    # Link and footnote texts exclude '[' (and URLs '(' ): a line full of unclosed
+    # brackets is then scanned once instead of once per bracket.
 
     def _build_docx_from_markdown(self, markdown_content: str) -> BytesIO:
         from docx import Document

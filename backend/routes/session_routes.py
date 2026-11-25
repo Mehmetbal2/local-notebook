@@ -30,6 +30,7 @@ from services.session_title_service import (
     normalize_title_generation_status,
 )
 from utils.time import utc_isoformat
+from utils.errors import public_error_message
 from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger("session_routes")
@@ -561,7 +562,7 @@ async def generate_title_for_session(
         session.title_generation_status = SESSION_TITLE_STATUS_FAILED
         session.updated_at = datetime.now(timezone.utc)
         await db.commit()
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=public_error_message(exc)) from exc
 
     session.title = title
     session.title_generation_status = SESSION_TITLE_STATUS_GENERATED
