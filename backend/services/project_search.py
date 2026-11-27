@@ -7,8 +7,10 @@ Every word of the query must occur in the same block (paragraph) or note.
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -114,9 +116,42 @@ class _FileIndex:
     stamp: str
     paged: bool
     blocks: list[tuple[str, str, int]] = field(default_factory=list)  # (content, folded, page)
+    size: int = 0  # approximate bytes held (original + folded text)
 
 
-_file_cache: dict[str, _FileIndex] = {}
+def _cache_budget() -> int:
+    try:
+        return max(1, int(os.getenv("PROJECT_SEARCH_CACHE_MB", "128"))) * 1024 * 1024
+    except ValueError:
+        return 128 * 1024 * 1024
+
+
+# Least recently used first. Bounded by PROJECT_SEARCH_CACHE_MB: without a bound
+# every searched source stayed in memory for the life of the process, including
+# sources that had since been deleted.
+_file_cache: "OrderedDict[str, _FileIndex]" = OrderedDict()
+_cache_bytes = 0
+
+
+def _cache_put(file_id: str, entry: _FileIndex) -> None:
+    global _cache_bytes
+    forget_file(file_id)
+    budget = _cache_budget()
+    if entry.size > budget:
+        return  # larger than the whole cache: rebuilt on each search instead
+    _file_cache[file_id] = entry
+    _cache_bytes += entry.size
+    while _cache_bytes > budget and _file_cache:
+        _, oldest = _file_cache.popitem(last=False)
+        _cache_bytes -= oldest.size
+
+
+def forget_file(file_id: str) -> None:
+    """Drop a source from the search cache (it changed or was deleted)."""
+    global _cache_bytes
+    old = _file_cache.pop(file_id, None)
+    if old is not None:
+        _cache_bytes -= old.size
 
 
 async def _file_index(db: AsyncSession, file_id: str, stamp: str, file_type: str | None) -> _FileIndex:
@@ -124,6 +159,7 @@ async def _file_index(db: AsyncSession, file_id: str, stamp: str, file_type: str
 
     cached = _file_cache.get(file_id)
     if cached is not None and cached.stamp == stamp:
+        _file_cache.move_to_end(file_id)
         return cached
     rows = (
         await db.execute(
@@ -131,12 +167,15 @@ async def _file_index(db: AsyncSession, file_id: str, stamp: str, file_type: str
         )
     ).all()
     pages = {page for _, page in rows if page}
+    blocks = [(content or "", fold(content or ""), page or 0) for content, page in rows]
     entry = _FileIndex(
         stamp=stamp,
         paged=file_type == "pdf" or len(pages) > 1,
-        blocks=[(content or "", fold(content or ""), page or 0) for content, page in rows],
+        blocks=blocks,
+        # str stores 1-4 bytes per character; 2 is a fair middle for mixed scripts.
+        size=sum(2 * (len(content) + len(folded)) + 64 for content, folded, _ in blocks),
     )
-    _file_cache[file_id] = entry
+    _cache_put(file_id, entry)
     return entry
 
 

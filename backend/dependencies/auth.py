@@ -4,15 +4,18 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from uuid import uuid4
 
 import bcrypt
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt import PyJWTError as JWTError
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.database import get_db
+from models.auth_session import AuthSession
 from models.user import User
 
 logger = logging.getLogger(__name__)
@@ -127,23 +130,116 @@ def password_fingerprint(password_hash: str) -> str:
     return digest.hexdigest()[:24]
 
 
-def token_payload_for(user: User) -> dict:
-    return {
+def token_payload_for(user: User, sid: Optional[str] = None) -> dict:
+    payload = {
         "sub": user.id,
         "username": user.username,
         "role": user.role,
         "pwv": password_fingerprint(user.password_hash),
     }
+    if sid:
+        payload["sid"] = sid
+    return payload
 
 
-def create_media_token(user: User) -> str:
+def create_media_token(user: User, sid: Optional[str] = None) -> str:
     payload = {
         "sub": user.id,
         "pwv": password_fingerprint(user.password_hash),
         "type": "media",
         "exp": datetime.now(timezone.utc) + timedelta(minutes=MEDIA_TOKEN_EXPIRE_MINUTES),
     }
+    if sid:
+        payload["sid"] = sid
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# ---------- sign-in sessions (see models/auth_session.py) ----------
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+async def start_session(db: AsyncSession, user: User) -> AuthSession:
+    """Record a new sign-in and drop this user's expired or revoked sessions."""
+    now = datetime.now(timezone.utc)
+    await db.execute(
+        sa_delete(AuthSession).where(
+            AuthSession.user_id == user.id,
+            (AuthSession.expires_at < now) | (AuthSession.revoked_at.is_not(None)),
+        )
+    )
+    session = AuthSession(
+        id=str(uuid4()),
+        user_id=user.id,
+        refresh_jti=str(uuid4()),
+        created_at=now,
+        expires_at=now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+    db.add(session)
+    await db.commit()
+    return session
+
+
+async def session_is_active(db: AsyncSession, payload: dict) -> bool:
+    """False when the token's sign-in session was signed out, expired or belongs to someone else.
+
+    Tokens issued before sessions existed carry no `sid`; access and media
+    tokens of that kind are short-lived and still accepted until they expire,
+    refresh tokens of that kind are refused (see rotate_refresh).
+    """
+    sid = payload.get("sid")
+    if sid is None:
+        return payload.get("type") != "refresh"
+    if not isinstance(sid, str):
+        return False
+    session = await db.get(AuthSession, sid)
+    return (
+        session is not None
+        and session.revoked_at is None
+        and session.user_id == payload.get("sub")
+        and _aware(session.expires_at) > datetime.now(timezone.utc)
+    )
+
+
+async def rotate_refresh(db: AsyncSession, payload: dict) -> AuthSession:
+    """Accept a refresh token once: give its session a new refresh id.
+
+    A refresh token whose id is not the session's current one was already
+    used, so it is a copy: the whole session is revoked.
+    """
+    if not await session_is_active(db, payload) or payload.get("sid") is None:
+        raise _credentials_exc
+    session = await db.get(AuthSession, payload["sid"])
+    if not isinstance(payload.get("jti"), str) or not hmac.compare_digest(payload["jti"], session.refresh_jti):
+        session.revoked_at = datetime.now(timezone.utc)
+        await db.commit()
+        raise _credentials_exc
+    session.refresh_jti = str(uuid4())
+    await db.commit()
+    return session
+
+
+async def revoke_session(db: AsyncSession, sid: Optional[str]) -> bool:
+    if not isinstance(sid, str):
+        return False
+    session = await db.get(AuthSession, sid)
+    if session is None or session.revoked_at is not None:
+        return False
+    session.revoked_at = datetime.now(timezone.utc)
+    await db.commit()
+    return True
+
+
+def issue_tokens(user: User, session: AuthSession) -> dict:
+    """Access, refresh and media tokens for one sign-in session."""
+    payload = token_payload_for(user, session.id)
+    return {
+        "access_token": create_access_token(payload),
+        "refresh_token": create_access_token({**payload, "jti": session.refresh_jti}, refresh=True),
+        "media_token": create_media_token(user, session.id),
+    }
 
 
 def token_matches_user(payload: dict, user: User) -> bool:
@@ -173,6 +269,8 @@ async def _get_user_from_token(
     payload = decode_token(token, expected_type=expected_type)
     user = await db.get(User, payload["sub"])
     if not user or not token_matches_user(payload, user):
+        raise _credentials_exc
+    if not await session_is_active(db, payload):
         raise _credentials_exc
     return user
 

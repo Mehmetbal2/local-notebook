@@ -11,8 +11,9 @@ from models.workflow import Workflow
 from models.feature import Feature
 from models.usage import UserModelUsageDaily
 from models.feature_agent_trace import FeatureAgentTrace
+from models.auth_session import AuthSession
 
 __all__ = [
     "User", "Project", "File", "Session", "Message", "Setting", "Segment", "Block",
-    "Image", "Workflow", "Feature", "UserModelUsageDaily", "FeatureAgentTrace",
+    "Image", "Workflow", "Feature", "UserModelUsageDaily", "FeatureAgentTrace", "AuthSession",
 ]

@@ -123,6 +123,10 @@ async def _delete_project_rows(db: AsyncSession, project_id: str, project: Proje
     await db.execute(sa_delete(Segment).where(or_(*segment_filters)))
 
     await db.execute(sa_delete(File).where(File.project_id == project_id))
+    from services.project_search import forget_file
+
+    for file_id in project_file_ids or []:
+        forget_file(file_id)
 
     await db.delete(project)
 

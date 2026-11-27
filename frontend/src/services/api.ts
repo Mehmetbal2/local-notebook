@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type { Project, FileInfo, Session, ToolExecuting, FileContent, Feature, FeatureBlock, ImageFileInfo } from '../types'
-import { getToken, clearTokens, getMediaToken, setMediaToken, mediaTokenNeedsRefresh } from './auth'
+import { getToken, getRefreshToken, clearTokens, getMediaToken, setMediaToken, mediaTokenNeedsRefresh } from './auth'
 import { getModelOutputLanguage, t } from '../i18n'
 import { UI_LANGUAGE_HEADER, currentUiLanguage } from './uiLanguageHeader'
 
@@ -90,6 +90,24 @@ export async function login(username: string, password: string) {
   const form = new URLSearchParams({ username, password })
   const response = await axios.post(`${API_BASE}/api/auth/login`, form)
   return response.data
+}
+
+/**
+ * Sign out on the server: revokes this sign-in's access, refresh and media tokens,
+ * so a copy of them stops working too. The refresh token is sent because it outlives
+ * the access token. Best effort: local tokens are cleared by the caller either way.
+ */
+export async function logoutSession(): Promise<void> {
+  const token = getRefreshToken() || getToken()
+  if (!token) return
+  try {
+    await axios.post(`${API_BASE}/api/auth/logout`, null, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 5000
+    })
+  } catch {
+    // Offline or already signed out: nothing more to revoke from here.
+  }
 }
 
 /** Fetch a fresh short-lived media token (for preview URLs) when it is missing or about to expire. */

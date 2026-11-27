@@ -45,7 +45,7 @@ Local Notebook **tek bir bilgisayarda veya güvenilen bir yerel ağda** çalış
 - **CORS:** Yalnızca `localhost` ve özel yerel ağ adresleri kabul edilir.
 - **Yüklenen HTML:** Tarayıcıda çalıştırılmaz; düz metin olarak, indirme şeklinde sunulur.
 - **Yedekler:** Tek kullanımlık, kısa ömürlü bağlantılarla indirilir; indirilmeyen arşivler otomatik silinir.
-- **Oturumlar:** Şifre değiştiğinde veya yönetici tarafından sıfırlandığında o kullanıcının eski bütün oturumları (erişim ve yenileme anahtarları) hemen geçersiz olur.
+- **Oturumlar:** Şifre değiştiğinde veya yönetici tarafından sıfırlandığında o kullanıcının eski bütün oturumları (erişim ve yenileme anahtarları) hemen geçersiz olur. Çıkış yapmak o oturumun anahtarlarını sunucuda iptal eder; yenileme anahtarı her kullanımda değişir ve eskisinin yeniden kullanılması oturumu kapatır.
 - **Web'den indirme:** Web kaynağı içe aktarma ve web araması yalnızca genel internetteki adreslere gider; yerel ağ, sunucunun kendisi ve bulut meta veri adresleri (yönlendirmeler dahil) engellenir.
 - **Yüklemeler:** Dosya gövdesi okunmadan önce geçerli oturum ve boyut sınırı (`MAX_UPLOAD_MB`) denetlenir; açıldığında aşırı büyüyen EPUB/DOCX arşivleri işlenmez.
 - **Docker:** Redis ve Milvus bilgisayarda hiçbir porttan yayınlanmaz; yalnızca yığının kendi kapsayıcıları erişebilir.
@@ -109,7 +109,7 @@ Local Notebook is designed to run **on one computer or a trusted local network**
 - CORS accepts only `localhost` and private LAN addresses.
 - Uploaded HTML is served as a plain-text download, never rendered.
 - Backups download through one-time, short-lived links; unfetched archives are removed.
-- Changing or resetting a password immediately revokes all of that user's earlier access and refresh tokens.
+- Changing or resetting a password immediately revokes all of that user's earlier access and refresh tokens. Signing out revokes that sign-in's tokens on the server; the refresh token changes on every use, and reusing an old one signs the session out.
 - Web-source import and web search fetch only public internet addresses; loopback, private networks and cloud metadata endpoints are blocked, including through redirects.
 - Uploads: a valid session and the size limit (`MAX_UPLOAD_MB`) are checked before the body is read; EPUB/DOCX archives that would expand to an unreasonable size are refused.
 - Docker: Redis and Milvus are not published on the host; only the stack's own containers can reach them.

@@ -64,6 +64,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import { clearTokens, getDisplayUsername, isAdmin } from '../../services/auth'
+import { logoutSession } from '../../services/api'
 import { useEscapeClose } from '../../composables/useEscapeClose'
 import { t } from '../../i18n'
 
@@ -80,8 +81,9 @@ const canAdmin = computed(() => isAdmin())
 const displayUsername = computed(() => getDisplayUsername() || t('ui.defaultUser'))
 const initial = computed(() => displayUsername.value.trim().charAt(0).toUpperCase() || '?')
 
-function logout() {
+async function logout() {
   menuOpen.value = false
+  await logoutSession()
   clearTokens()
   router.push('/login')
 }

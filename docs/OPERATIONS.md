@@ -122,6 +122,7 @@ the vectors; in server mode it does not.
 | `PDF_MAX_PAGE_CONTENT_MB` | `32` | Largest expanded content of one PDF page (content streams plus every form drawing); larger pages are skipped |
 | `PDF_MAX_CONTENT_MB` | `1024` | Largest expanded content of a whole PDF, a shared stream counted once per page |
 | `PDF_MAX_TEXT_MB` | `64` | Most text (million characters) one PDF may yield |
+| `PROJECT_SEARCH_CACHE_MB` | `128` | Memory for the in-project search cache (least recently used sources are dropped first) |
 | `PARSER_MAX_MEMORY_MB` | `2048` | Document parsing (PDF, EPUB, DOCX, HTML, TXT/Markdown) runs in a child process that is stopped above this resident memory |
 | `PARSER_TIMEOUT_SECONDS` | `1800` | The parsing child process is stopped after this long |
 | `PARSER_ISOLATION` | on | Set to `0` to parse in the backend process (debugging only; removes the memory/time guard) |

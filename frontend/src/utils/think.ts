@@ -2,6 +2,9 @@
 
 import { t } from '../i18n'
 
+/** Longest `[citation_N-citation_M]` range expanded, matching the backend's MAX_RANGE_SIZE. */
+const MAX_CITATION_RANGE = 200
+
 export const ENABLE_THINK_PARSING = true
 
 export interface ThinkingParseResult {
@@ -98,8 +101,13 @@ export function renderThinkingBlock(
   )
   processedThinking = processedThinking.replace(
     /\[citation_(\d+)-citation_(\d+)\]/g,
-    (_match, start, end) => {
-      const s = parseInt(start), e = parseInt(end)
+    (match, start, end) => {
+      const s = parseInt(start, 10), e = parseInt(end, 10)
+      // Same cap as the backend citation parser (MAX_RANGE_SIZE): model output can be
+      // steered by imported content, and an unbounded range would freeze the page.
+      if (!Number.isSafeInteger(s) || !Number.isSafeInteger(e) || e < s || e - s + 1 > MAX_CITATION_RANGE) {
+        return match
+      }
       return Array.from({ length: e - s + 1 }, (_, i) => `{{CITE:${s + i}}}`).join('')
     }
   )

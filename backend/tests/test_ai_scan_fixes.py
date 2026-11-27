@@ -1094,3 +1094,94 @@ class NinthRoundTests(unittest.TestCase):
                 refused = asyncio.run(client.parse_pdf(str(tmp / "uzun.pdf")))
             self.assertFalse(refused.success)
             self.assertIn("45", refused.error_message)
+
+
+class TenthRoundTests(unittest.TestCase):
+    """AI Scan alerts #98-#100 (27 Nov 2026)."""
+
+    def _run_with_db(self, body):
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from database import Base
+        from models.auth_session import AuthSession
+        from models.user import User
+
+        async def main():
+            engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all, tables=[User.__table__, AuthSession.__table__])
+            maker = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                async with maker() as db:
+                    await body(db)
+            finally:
+                await engine.dispose()
+
+        asyncio.run(main())
+
+    def test_logout_revokes_access_refresh_and_media_tokens(self):
+        from fastapi import HTTPException
+
+        from dependencies import auth
+        from models.user import User
+
+        async def body(db):
+            user = User(id="u1", username="ayse", password_hash=auth.hash_password("parola-123"), role="user")
+            db.add(user)
+            await db.commit()
+            tokens = auth.issue_tokens(user, await auth.start_session(db, user))
+            self.assertEqual((await auth._get_user_from_token(tokens["access_token"], db)).id, "u1")
+            self.assertEqual((await auth._get_user_from_token(tokens["media_token"], db, expected_type="media")).id, "u1")
+            sid = auth.decode_token(tokens["access_token"])["sid"]
+            self.assertTrue(await auth.revoke_session(db, sid))
+            for token, kind in ((tokens["access_token"], "access"), (tokens["media_token"], "media")):
+                with self.assertRaises(HTTPException):
+                    await auth._get_user_from_token(token, db, expected_type=kind)
+            with self.assertRaises(HTTPException):
+                await auth.rotate_refresh(db, auth.decode_token(tokens["refresh_token"], expected_type="refresh"))
+
+        self._run_with_db(body)
+
+    def test_refresh_token_works_once_and_reuse_revokes_the_session(self):
+        from fastapi import HTTPException
+
+        from dependencies import auth
+        from models.user import User
+
+        async def body(db):
+            user = User(id="u2", username="mehmet", password_hash=auth.hash_password("parola-456"), role="user")
+            db.add(user)
+            await db.commit()
+            first = auth.issue_tokens(user, await auth.start_session(db, user))
+            payload = auth.decode_token(first["refresh_token"], expected_type="refresh")
+            second = auth.issue_tokens(user, await auth.rotate_refresh(db, payload))
+            self.assertEqual((await auth._get_user_from_token(second["access_token"], db)).id, "u2")
+            with self.assertRaises(HTTPException):  # the first refresh token again: a copy
+                await auth.rotate_refresh(db, payload)
+            with self.assertRaises(HTTPException):  # ...which signed the whole session out
+                await auth._get_user_from_token(second["access_token"], db)
+            legacy = auth.create_access_token(auth.token_payload_for(user), refresh=True)
+            with self.assertRaises(HTTPException):
+                await auth.rotate_refresh(db, auth.decode_token(legacy, expected_type="refresh"))
+            other = auth.issue_tokens(user, await auth.start_session(db, user))
+            self.assertEqual((await auth._get_user_from_token(other["access_token"], db)).id, "u2")
+
+        self._run_with_db(body)
+
+    def test_search_cache_is_bounded_and_forgets_deleted_files(self):
+        from services import project_search as ps
+
+        ps._file_cache.clear()
+        ps._cache_bytes = 0
+        self.addCleanup(ps._file_cache.clear)
+        with mock.patch.dict(os.environ, {"PROJECT_SEARCH_CACHE_MB": "1"}):
+            for i in range(40):
+                text = "metin " * 10_000  # ~120 KB per entry
+                entry = ps._FileIndex(stamp="s", paged=False, blocks=[(text, text, 0)], size=2 * 2 * len(text))
+                ps._cache_put(f"f{i}", entry)
+                self.assertLessEqual(ps._cache_bytes, 1024 * 1024)
+            self.assertIn("f39", ps._file_cache)
+            self.assertNotIn("f0", ps._file_cache)
+            ps.forget_file("f39")
+            self.assertNotIn("f39", ps._file_cache)
+            self.assertEqual(ps._cache_bytes, sum(e.size for e in ps._file_cache.values()))

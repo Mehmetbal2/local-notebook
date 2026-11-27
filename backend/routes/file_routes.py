@@ -167,6 +167,9 @@ async def _delete_file(db: AsyncSession, db_file: File, request: Request | None 
     await db.execute(sa_delete(Block).where(Block.file_id == db_file.id))
     await db.execute(sa_delete(Image).where(Image.file_id == db_file.id))
     await db.delete(db_file)
+    from services.project_search import forget_file
+
+    forget_file(db_file.id)
     # A project overview that mentioned this file is now wrong; clear it rather than
     # leaving a stale description ("one PDF" for a project with zero files).
     project = await db.get(Project, project_id)
