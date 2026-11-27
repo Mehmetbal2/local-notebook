@@ -130,17 +130,23 @@ def _split_run(run) -> None:
     if len(pieces) == 1:
         _mark_rtl(run)
         return
-    parent = run.getparent()
-    index = parent.index(run)
-    for offset, (piece, is_rtl) in enumerate(pieces):
-        new_run = copy.deepcopy(run)
+    # Copy the run once without its text and clone that small template per piece;
+    # copying the whole run (text included) per piece took time proportional to the
+    # square of the text length for alternating scripts. Each piece goes right after
+    # the previous one, so no position has to be looked up again.
+    texts[0].text = ""
+    template = copy.deepcopy(run)
+    previous = run
+    for piece, is_rtl in pieces:
+        new_run = copy.deepcopy(template)
         new_text = new_run.find(f"{W}t")
         new_text.text = piece
         new_text.set(XML_SPACE, "preserve")
         if is_rtl:
             _mark_rtl(new_run)
-        parent.insert(index + offset, new_run)
-    parent.remove(run)
+        previous.addnext(new_run)
+        previous = new_run
+    run.getparent().remove(run)
 
 
 def _starts_rtl(text: str) -> bool:

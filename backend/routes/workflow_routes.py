@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -244,7 +245,9 @@ async def export_workflow(
         from services.references import attach_reference_data
 
         await attach_reference_data(db, [workflow_citations, *(f.get("citations") or {} for f in features)])
-        docx_stream, filename = export_service.export_workflow_to_docx(
+        # Building the document is CPU work; run it off the event loop.
+        docx_stream, filename = await asyncio.to_thread(
+            export_service.export_workflow_to_docx,
             workflow_title=wf.title or "",
             features=features,
             citations=workflow_citations,

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -695,7 +696,9 @@ async def export_session(
         from services.references import attach_reference_data
 
         await attach_reference_data(db, [m.get("citations") for m in all_messages if m.get("role") == "tool"])
-        docx_stream, filename = export_service.export_session_to_docx(
+        # Building the document is CPU work; run it off the event loop.
+        docx_stream, filename = await asyncio.to_thread(
+            export_service.export_session_to_docx,
             session_title=session.title or "",
             all_messages=all_messages,
             user_message_ids=body.user_message_ids,

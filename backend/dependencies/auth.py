@@ -185,14 +185,12 @@ async def start_session(db: AsyncSession, user: User) -> AuthSession:
 async def session_is_active(db: AsyncSession, payload: dict) -> bool:
     """False when the token's sign-in session was signed out, expired or belongs to someone else.
 
-    Tokens issued before sessions existed carry no `sid`; access and media
-    tokens of that kind are short-lived and still accepted until they expire,
-    refresh tokens of that kind are refused (see rotate_refresh).
+    Tokens issued before sessions existed carry no `sid` and are refused.
     """
     sid = payload.get("sid")
-    if sid is None:
-        return payload.get("type") != "refresh"
     if not isinstance(sid, str):
+        # Tokens from before sign-in sessions existed cannot be signed out, so they
+        # are refused outright (users sign in once more after the update).
         return False
     session = await db.get(AuthSession, sid)
     return (

@@ -66,11 +66,18 @@ class MediaTokenTests(unittest.TestCase):
 
         from dependencies import auth
 
+        from datetime import datetime, timedelta, timezone
+
+        from models.auth_session import AuthSession
+
         user = mock.Mock(id="u1", username="ayse", role="user", password_hash=auth.hash_password("parola"))
+        session = AuthSession(
+            id="s1", user_id="u1", refresh_jti="j1", expires_at=datetime.now(timezone.utc) + timedelta(days=1)
+        )
         db = mock.Mock()
-        db.get = mock.AsyncMock(return_value=user)
-        access = auth.create_access_token(auth.token_payload_for(user))
-        media = auth.create_media_token(user)
+        db.get = mock.AsyncMock(side_effect=lambda model, key, **kw: session if model is AuthSession else user)
+        access = auth.create_access_token(auth.token_payload_for(user, "s1"))
+        media = auth.create_media_token(user, "s1")
 
         async def resolve(header, query):
             return await auth.get_current_user_query_or_header(header_token=header, query_token=query, db=db)
@@ -1272,3 +1279,43 @@ class EleventhRoundTests(unittest.TestCase):
         self.assertEqual([p.name for p in (first, second, third)], ["rapor.pdf", "rapor (2).pdf", "rapor (3).pdf"])
         with self.assertRaises(ValueError):
             _reserve_upload_path(tmp, "../dışarı.pdf")
+
+
+class TwelfthRoundTests(unittest.TestCase):
+    """AI Scan alerts #104-#105 (27 Nov 2026)."""
+
+    def test_tokens_without_a_session_are_refused(self):
+        from dependencies import auth
+        from models.user import User
+
+        user = User(id="u5", username="elif", password_hash=auth.hash_password("parola-111"), role="user")
+        for kind in ("access", "media", "refresh"):
+            payload = {**auth.token_payload_for(user), "type": kind}
+            self.assertFalse(asyncio.run(auth.session_is_active(None, payload)), kind)
+
+    def test_alternating_scripts_split_in_linear_time(self):
+        import time
+
+        from lxml import etree
+
+        from services import docx_rtl
+
+        W = docx_rtl.W
+        ns = W.strip("{}")
+
+        def paragraph(text: str):
+            p = etree.fromstring(f'<w:p xmlns:w="{ns}"><w:r><w:rPr><w:b/></w:rPr><w:t>{text}</w:t></w:r></w:p>')
+            docx_rtl._split_run(p.find(f"{W}r"))
+            return p
+
+        small = paragraph("Önce Türkçe سلام عليكم sonra")
+        runs = small.findall(f"{W}r")
+        self.assertEqual([r.find(f"{W}t").text for r in runs], ["Önce Türkçe ", "سلام عليكم", " sonra"])
+        self.assertTrue(all(r.find(f"{W}rPr/{W}b") is not None for r in runs))
+        self.assertIsNotNone(runs[1].find(f"{W}rPr/{W}rtl"))
+        self.assertIsNone(runs[0].find(f"{W}rPr/{W}rtl"))
+
+        start = time.perf_counter()
+        big = paragraph("a ب " * 20000)
+        self.assertLess(time.perf_counter() - start, 10)
+        self.assertEqual("".join(r.find(f"{W}t").text for r in big.findall(f"{W}r")), "a ب " * 20000)
