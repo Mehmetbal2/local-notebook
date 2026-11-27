@@ -126,7 +126,14 @@ class TxtParser(BaseParser):
         return [".txt", ".md", ".markdown"]
 
     async def parse(self, file_path: str) -> ParseResult:
-        text = await asyncio.to_thread(read_text_file, file_path)
+        from .isolation import run_isolated
+
+        # In a child process with a memory and time limit (see isolation.py); this
+        # also keeps block building off the event loop.
+        return await asyncio.to_thread(run_isolated, parse_file, file_path)
+
+    def _parse_sync(self, file_path: str) -> ParseResult:
+        text = read_text_file(file_path)
         blocks, normalized_text, page_count = self._create_blocks_with_text(
             text, file_path=file_path
         )
@@ -377,3 +384,8 @@ class TxtParser(BaseParser):
             return len(match.group(1))
 
         return 2
+
+
+def parse_file(file_path: str) -> ParseResult:
+    """TxtParser()._parse_sync as a module-level function, so it can run in a child process."""
+    return TxtParser()._parse_sync(file_path)

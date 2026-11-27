@@ -982,3 +982,59 @@ def _parse_with_page_limit(path: str):
     importlib.reload(pdf_limits)
     importlib.reload(pymupdf_parser)
     return pymupdf_parser.parse_file(path)
+
+
+class EighthRoundTests(unittest.TestCase):
+    """AI Scan alerts #93-#95 (27 Nov 2026)."""
+
+    def test_nested_page_containers_are_read_once(self):
+        from workers.parsers.html_parser import HtmlParser
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        body = '<div class="PageText">' * 300 + "<p>" + "tekrar " * 500 + "</p>" + "</div>" * 300
+        (tmp / "p.html").write_text(f"<html><body>{body}</body></html>", encoding="utf-8")
+        result = asyncio.run(HtmlParser().parse(str(tmp / "p.html")))
+        self.assertEqual(result.text.count("tekrar"), 500)
+
+    def test_docx_and_txt_parse_in_child_process(self):
+        from workers.parsers import isolation
+        from workers.parsers.docx_parser import DocxParser
+        from workers.parsers.txt_parser import TxtParser
+
+        try:
+            import docx
+        except ImportError:
+            self.skipTest("python-docx is not installed")
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        document = docx.Document()
+        document.add_paragraph("Birinci paragraf.")
+        document.add_paragraph("İkinci paragraf.")
+        document.save(str(tmp / "d.docx"))
+        (tmp / "t.txt").write_text("Başlık\n\nMetin satırı burada.", encoding="utf-8")
+        with mock.patch.object(isolation, "PARSER_ISOLATION", True), mock.patch.object(
+            isolation, "run_isolated", wraps=isolation.run_isolated
+        ) as spy:
+            self.assertIn("İkinci paragraf.", asyncio.run(DocxParser().parse(str(tmp / "d.docx"))).text)
+            self.assertIn("Metin satırı burada.", asyncio.run(TxtParser().parse(str(tmp / "t.txt"))).text)
+        self.assertEqual(spy.call_count, 2)
+
+    def test_web_page_noise_removal_is_linear(self):
+        import time
+
+        from services.searxng_client import extract_html
+
+        deep = "<html><body>" + '<div class="cookie">' * 3000 + "x " * 2000 + "</div>" * 3000 + "</body></html>"
+        start = time.perf_counter()
+        self.assertGreater(len(extract_html(deep, "https://ex.org/")["text"]), 1000)
+        self.assertLess(time.perf_counter() - start, 3)
+        page = (
+            '<html><body><div class="cookie-banner"><p>Çerezleri kabul edin</p></div>'
+            '<div class="content has-sidebar"><article>' + "<p>" + "Makale metni. " * 60 + "</p>" * 1
+            + "</article><div class='sidebar'><p>Kısa yan kutu</p></div></div></body></html>"
+        )
+        text = extract_html(page, "https://ex.org/")["text"]
+        self.assertIn("Makale metni.", text)
+        self.assertNotIn("Çerezleri", text)
+        self.assertNotIn("yan kutu", text)

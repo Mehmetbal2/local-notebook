@@ -11,8 +11,10 @@ class DocxParser(BaseParser):
         return [".docx", ".doc"]
 
     async def parse(self, file_path: str) -> ParseResult:
-        result = await asyncio.to_thread(self._parse_sync, file_path)
-        return result
+        from .isolation import run_isolated
+
+        # In a child process with a memory and time limit: see isolation.py.
+        return await asyncio.to_thread(run_isolated, parse_file, file_path)
 
     def _parse_sync(self, file_path: str) -> ParseResult:
         import docx
@@ -90,3 +92,8 @@ class DocxParser(BaseParser):
             return "list"
 
         return "paragraph"
+
+
+def parse_file(file_path: str) -> ParseResult:
+    """DocxParser()._parse_sync as a module-level function, so it can run in a child process."""
+    return DocxParser()._parse_sync(file_path)

@@ -108,7 +108,10 @@ class HtmlParser(BaseParser):
         file_id: Optional[str] = None,
         db=None,
     ) -> ParseResult:
-        return await asyncio.to_thread(self._parse_sync, file_path, file_id)
+        from .isolation import run_isolated
+
+        # In a child process with a memory and time limit: see isolation.py.
+        return await asyncio.to_thread(run_isolated, parse_file, file_path, file_id)
 
     # ---------- top-level parsing ----------
 
@@ -152,7 +155,7 @@ class HtmlParser(BaseParser):
         for tag in soup(list(_DROP_TAGS)):
             tag.decompose()
 
-        page_divs = soup.find_all("div", class_="PageText")
+        page_divs = self._outermost(soup.find_all("div", class_="PageText"), "PageText")
         if page_divs:
             collected, max_page = self._extract_shamela_pages(page_divs)
         else:
@@ -167,6 +170,23 @@ class HtmlParser(BaseParser):
             page_count=max_page,
             images=self._images,
         )
+
+    @staticmethod
+    def _outermost(divs: list, class_name: str) -> list:
+        """Drop matches nested inside an earlier match (document order).
+
+        A nested page container is part of its outer one; extracting both
+        copied the same text once per nesting level. Each kept container's
+        subtree is scanned once, and nested ones are never scanned themselves.
+        """
+        nested: set = set()
+        kept = []
+        for div in divs:
+            if id(div) in nested:
+                continue
+            kept.append(div)
+            nested.update(id(inner) for inner in div.find_all("div", class_=class_name))
+        return kept
 
     def _extract_shamela_pages(
         self, page_divs: list
@@ -550,3 +570,8 @@ class HtmlParser(BaseParser):
             contents.append(content)
 
         return blocks, "\n".join(contents)
+
+
+def parse_file(file_path: str, file_id: Optional[str] = None) -> ParseResult:
+    """HtmlParser()._parse_sync as a module-level function, so it can run in a child process."""
+    return HtmlParser()._parse_sync(file_path, file_id)

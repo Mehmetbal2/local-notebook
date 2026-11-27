@@ -278,44 +278,113 @@ def _element_to_markdown(root) -> str:
 
     lines: list[str] = []
     block_tags = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "td", "th", "dd", "dt", "figcaption"}
+    # Which elements contain a block element, found in one bottom-up pass:
+    # asking `find(block_tags)` of every nested div rescanned each subtree once
+    # per enclosing div.
+    holds_block: set[int] = set()
+    for tag in reversed(root.find_all(True)):
+        if tag.parent is not None and (id(tag) in holds_block or tag.name.lower() in block_tags):
+            holds_block.add(id(tag.parent))
 
-    def walk(node) -> None:
-        for child in node.children:
-            if isinstance(child, NavigableString):
-                continue
-            if not isinstance(child, Tag):
-                continue
-            name = child.name.lower()
-            if name in block_tags:
-                text = _clean_inline(child.get_text(" ", strip=True))
-                if not text:
-                    continue
-                if name.startswith("h") and len(name) == 2:
-                    level = min(int(name[1]) + 1, 6)
-                    lines.append(f"{'#' * level} {text}")
-                elif name == "li":
-                    lines.append(f"- {text}")
-                elif name == "blockquote":
-                    lines.append(f"> {text}")
-                else:
-                    lines.append(text)
-            elif name in ("br", "hr", "img"):
-                continue
+    def visit(child) -> bool:
+        """Handle one element; True when its children should be walked."""
+        name = child.name.lower()
+        if name in block_tags:
+            text = _clean_inline(child.get_text(" ", strip=True))
+            if not text:
+                return False
+            if name.startswith("h") and len(name) == 2:
+                level = min(int(name[1]) + 1, 6)
+                lines.append(f"{'#' * level} {text}")
+            elif name == "li":
+                lines.append(f"- {text}")
+            elif name == "blockquote":
+                lines.append(f"> {text}")
             else:
-                # Text directly inside a div (no <p>) still counts as a paragraph.
-                direct = "".join(str(c) for c in child.children if isinstance(c, NavigableString)).strip()
-                if direct and len(direct) > 40 and not child.find(block_tags):
-                    lines.append(_clean_inline(child.get_text(" ", strip=True)))
-                else:
-                    walk(child)
+                lines.append(text)
+            return False
+        if name in ("br", "hr", "img"):
+            return False
+        # Text directly inside a div (no <p>) still counts as a paragraph.
+        direct = "".join(str(c) for c in child.children if isinstance(c, NavigableString)).strip()
+        if direct and len(direct) > 40 and id(child) not in holds_block:
+            lines.append(_clean_inline(child.get_text(" ", strip=True)))
+            return False
+        return True
 
-    walk(root)
+    # An explicit stack instead of recursion, so deeply nested pages cannot
+    # exceed Python's recursion limit.
+    stack = [iter(root.children)]
+    while stack:
+        child = next(stack[-1], None)
+        if child is None:
+            stack.pop()
+            continue
+        if isinstance(child, NavigableString) or not isinstance(child, Tag):
+            continue
+        if visit(child):
+            stack.append(iter(child.children))
     out: list[str] = []
     for line in lines:
         if out and out[-1] == line:
             continue
         out.append(line)
     return "\n\n".join(out)
+
+
+
+def _drop_noise(soup) -> None:
+    """Remove cookie banners, sidebars and similar boxes in one linear pass.
+
+    A box is removed when its class or id looks like noise, unless it holds an
+    <article>/<main>, three or more paragraphs, or 2500+ characters of text
+    (large wrappers such as "content has-sidebar" hold the article itself).
+    The counts for every element are summed bottom-up first; asking each
+    nested box for them separately rescanned the same subtree once per level.
+    """
+    from bs4 import NavigableString
+    from bs4.element import Comment, Declaration, Doctype, ProcessingInstruction
+
+    tags = soup.find_all(True)
+    index = {id(tag): i for i, tag in enumerate(tags)}
+    paragraphs = [0] * len(tags)   # <p> descendants
+    text = [0] * len(tags)         # approximate get_text(" ", strip=True) length
+    has_main = [False] * len(tags)  # an <article> or <main> descendant
+    end = list(range(1, len(tags) + 1))  # index after the last descendant
+
+    skipped = (Comment, Declaration, Doctype, ProcessingInstruction)
+    for string in soup.find_all(string=True):
+        if isinstance(string, skipped) or not isinstance(string, NavigableString):
+            continue
+        stripped = len(string.strip())
+        parent = index.get(id(string.parent))
+        if stripped and parent is not None:
+            text[parent] += stripped + 1
+    for i in range(len(tags) - 1, -1, -1):
+        parent = index.get(id(tags[i].parent))
+        if parent is None:
+            continue
+        paragraphs[parent] += paragraphs[i] + (tags[i].name == "p")
+        text[parent] += text[i]
+        has_main[parent] = has_main[parent] or has_main[i] or tags[i].name in ("article", "main")
+        end[parent] = max(end[parent], end[i])
+
+    i = 0
+    while i < len(tags):
+        tag = tags[i]
+        attrs = " ".join(tag.get("class") or []) + " " + str(tag.get("id") or "")
+        if (
+            attrs.strip()
+            and _NOISE_RE.search(attrs)
+            and tag.name not in ("body", "html", "article", "main")
+            and not has_main[i]
+            and paragraphs[i] < 3
+            and text[i] < 2500
+        ):
+            tag.decompose()
+            i = end[i]  # its descendants went with it
+            continue
+        i += 1
 
 
 def _pick_main(soup):
@@ -361,16 +430,7 @@ def extract_html(html: str, base_url: str) -> dict:
 
     for tag in soup.find_all(_DROP_TAGS):
         tag.decompose()
-    for tag in soup.find_all(True):
-        if tag.attrs is None:
-            continue
-        attrs = " ".join(tag.get("class") or []) + " " + str(tag.get("id") or "")
-        if attrs.strip() and _NOISE_RE.search(attrs) and tag.name not in ("body", "html", "article", "main"):
-            # Large wrappers (e.g. "content has-sidebar") hold the article itself.
-            if tag.find(["article", "main"]) or len(tag.find_all("p")) >= 3:
-                continue
-            if len(tag.get_text(" ", strip=True)) < 2500:
-                tag.decompose()
+    _drop_noise(soup)
 
     main = _pick_main(soup)
     text = _element_to_markdown(main)
