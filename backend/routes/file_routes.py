@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import unicodedata
 from pathlib import Path
@@ -21,6 +22,8 @@ from paths import get_upload_dir, resolve_stored_path, safe_join, to_portable_pa
 from schemas.file import FileResponse
 from utils.text_decoding import looks_like_binary
 from utils.i18n import msg as ui_msg
+
+logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = get_upload_dir()
 UPLOAD_CHUNK_SIZE = 1024 * 1024
@@ -68,13 +71,10 @@ def _int_or_none(value) -> int | None:
 
 
 def _get_pdf_page_count_sync(file_path: str) -> int:
-    try:
-        from pypdf import PdfReader
+    """Page count read in the memory- and time-limited child process (0 on failure)."""
+    from workers.parsers.pdf_limits import isolated_page_count
 
-        reader = PdfReader(file_path)
-        return len(reader.pages)
-    except Exception:
-        return 0
+    return isolated_page_count(file_path)
 
 
 async def _get_file_or_404(

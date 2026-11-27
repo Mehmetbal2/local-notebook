@@ -86,46 +86,32 @@ def _safe_file_stem(file_path: str) -> str:
     return safe[:80] or "document"
 
 
-def _get_pdf_page_count_sync(file_path: str) -> int:
-    try:
-        from pypdf import PdfReader
-
-        reader = PdfReader(file_path)
-        return len(reader.pages)
-    except Exception:
-        return 0
-
-
 async def _get_pdf_page_count(file_path: str) -> int:
-    return await asyncio.to_thread(_get_pdf_page_count_sync, file_path)
+    from workers.parsers.pdf_limits import isolated_page_count
+
+    # pypdf runs in the memory- and time-limited child process (see isolation.py).
+    return await asyncio.to_thread(isolated_page_count, file_path)
 
 
-def _split_pdf_sync(file_path: str, output_dir: str, pages_per_chunk: int) -> list[PDFChunk]:
+def _write_pdf_chunk(file_path: str, output_dir: str, start: int, end: int) -> str:
+    """Write pages [start, end) of the PDF to their own file and return its path."""
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(file_path)
-    total_pages = len(reader.pages)
-    stem = _safe_file_stem(file_path)
-    chunks: list[PDFChunk] = []
-
-    for start in range(0, total_pages, pages_per_chunk):
-        end = min(start + pages_per_chunk, total_pages)
-        writer = PdfWriter()
-        for page_index in range(start, end):
-            writer.add_page(reader.pages[page_index])
-
-        chunk_name = f"{stem}_p{start + 1:04d}-{end:04d}.pdf"
-        chunk_path = os.path.join(output_dir, chunk_name)
-        with open(chunk_path, "wb") as f:
-            writer.write(f)
-
-        chunks.append(PDFChunk(file_path=chunk_path, start_page=start, end_page=end))
-
-    return chunks
+    writer = PdfWriter()
+    for page_index in range(start, min(end, len(reader.pages))):
+        writer.add_page(reader.pages[page_index])
+    chunk_path = os.path.join(output_dir, f"{_safe_file_stem(file_path)}_p{start + 1:04d}-{end:04d}.pdf")
+    with open(chunk_path, "wb") as f:
+        writer.write(f)
+    return chunk_path
 
 
-async def _split_pdf(file_path: str, output_dir: str, pages_per_chunk: int) -> list[PDFChunk]:
-    return await asyncio.to_thread(_split_pdf_sync, file_path, output_dir, pages_per_chunk)
+async def _split_one_chunk(file_path: str, output_dir: str, start: int, end: int) -> str:
+    """One page chunk, written in the memory- and time-limited child process."""
+    from workers.parsers.isolation import run_isolated
+
+    return await asyncio.to_thread(run_isolated, _write_pdf_chunk, file_path, output_dir, start, end)
 
 
 def _markdown_page_to_content_list(page_text: str, page_idx: int) -> list[dict]:
@@ -379,7 +365,16 @@ class PDFOCRClient:
                 error_message=ui_msg("file_not_found", path=file_path),
             )
 
+        from workers.parsers import pdf_limits
+
         page_count = await _get_pdf_page_count(file_path)
+        if page_count > pdf_limits.PDF_MAX_PAGES:
+            return OCRResult(
+                markdown="",
+                content_list=[],
+                success=False,
+                error_message=ui_msg("pdf_too_many_pages", count=page_count, limit=pdf_limits.PDF_MAX_PAGES),
+            )
         if page_count > OCR_PDF_CHUNK_PAGES:
             return await self._parse_pdf_in_page_chunks(file_path=file_path, page_count=page_count)
 
@@ -391,8 +386,14 @@ class PDFOCRClient:
         )
 
         cache_dir = await asyncio.to_thread(_ocr_cache_dir, file_path, self.model)
+        # Chunks are written one at a time, just before their OCR request, and
+        # deleted right after it: writing them all first could turn a PDF whose
+        # pages share one large resource into a copy of it per chunk on disk.
+        chunks = [
+            PDFChunk(file_path=file_path, start_page=start, end_page=min(start + OCR_PDF_CHUNK_PAGES, page_count))
+            for start in range(0, page_count, OCR_PDF_CHUNK_PAGES)
+        ]
         with tempfile.TemporaryDirectory(prefix="pdf_ocr_chunks_") as temp_dir:
-            chunks = await _split_pdf(file_path, temp_dir, OCR_PDF_CHUNK_PAGES)
             chunk_results: list[tuple[PDFChunk, OCRResult]] = []
 
             for index, chunk in enumerate(chunks, start=1):
@@ -406,10 +407,16 @@ class PDFOCRClient:
                 logger.info(
                     f"OCR chunk {index}/{len(chunks)}: pages {chunk.start_page + 1}-{chunk.end_page}"
                 )
-                result = await self._parse_pdf_single(
-                    file_path=chunk.file_path,
-                    page_count=chunk.end_page - chunk.start_page,
-                )
+                chunk_path = ""
+                try:
+                    chunk_path = await _split_one_chunk(file_path, temp_dir, chunk.start_page, chunk.end_page)
+                    result = await self._parse_pdf_single(
+                        file_path=chunk_path,
+                        page_count=chunk.end_page - chunk.start_page,
+                    )
+                finally:
+                    if chunk_path and os.path.exists(chunk_path):
+                        os.remove(chunk_path)
                 if result.success:
                     _save_cached_chunk(cache_dir, chunk, result)
                 if not result.success:

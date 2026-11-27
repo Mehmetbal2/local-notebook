@@ -457,13 +457,7 @@ class PDFParser(BaseParser):
         return "\n".join(md_rows)
 
     async def _get_pdf_page_count(self, file_path: str) -> int:
-        def _count_pages() -> int:
-            try:
-                from pypdf import PdfReader
+        from .pdf_limits import isolated_page_count
 
-                reader = PdfReader(file_path)
-                return len(reader.pages)
-            except Exception:
-                return 0
-
-        return await asyncio.to_thread(_count_pages)
+        # pypdf runs in the memory- and time-limited child process (see isolation.py).
+        return await asyncio.to_thread(isolated_page_count, file_path)

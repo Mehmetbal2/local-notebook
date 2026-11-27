@@ -269,6 +269,27 @@ class PdfBudget:
                 yield index
 
 
+def count_pages(file_path: str) -> int:
+    """Page count read with pypdf, 0 when the file cannot be read."""
+    try:
+        from pypdf import PdfReader
+
+        return len(PdfReader(file_path).pages)
+    except Exception:
+        return 0
+
+
+def isolated_page_count(file_path: str) -> int:
+    """count_pages in the memory- and time-limited child process; 0 on any failure."""
+    from .isolation import run_isolated
+
+    try:
+        return run_isolated(count_pages, file_path, timeout=300)
+    except Exception as exc:
+        logger.warning("PDF page count failed: %s", exc)
+        return 0
+
+
 def extract_plain_text(
     data: bytes,
     *,

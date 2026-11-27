@@ -259,12 +259,24 @@ def _meta(soup, *names: str) -> str:
     return ""
 
 
+_META_ALL_MAX = 100  # callers keep at most 20 (authors)
+
+
 def _meta_all(soup, name: str) -> list[str]:
-    out = []
+    """Distinct values of a repeated meta tag, in order, at most _META_ALL_MAX.
+
+    A set keeps the duplicate check constant-time: checking each value against
+    the growing list took quadratic time on a page with many distinct values.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
     for tag in soup.find_all("meta", attrs={"name": name}):
         value = str(tag.get("content") or "").strip()
-        if value and value not in out:
+        if value and value not in seen:
+            seen.add(value)
             out.append(value)
+            if len(out) >= _META_ALL_MAX:
+                break
     return out
 
 

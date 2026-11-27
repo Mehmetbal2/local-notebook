@@ -1038,3 +1038,59 @@ class EighthRoundTests(unittest.TestCase):
         self.assertIn("Makale metni.", text)
         self.assertNotIn("Çerezleri", text)
         self.assertNotIn("yan kutu", text)
+
+
+class NinthRoundTests(unittest.TestCase):
+    """AI Scan alerts #96-#97 (27 Nov 2026)."""
+
+    def test_many_author_meta_tags_are_linear(self):
+        import time
+
+        from bs4 import BeautifulSoup
+
+        from services.searxng_client import _meta_all
+
+        html = "<html><head>" + "".join(f'<meta name="citation_author" content="Yazar {i}">' for i in range(30000)) + "</head></html>"
+        soup = BeautifulSoup(html, "html.parser")
+        start = time.perf_counter()
+        values = _meta_all(soup, "citation_author")
+        self.assertLess(time.perf_counter() - start, 2)
+        self.assertEqual(values[:2], ["Yazar 0", "Yazar 1"])
+        self.assertLessEqual(len(values), 100)
+        dup = BeautifulSoup('<meta name="a" content="x"><meta name="a" content="x"><meta name="a" content="y">', "html.parser")
+        self.assertEqual(_meta_all(dup, "a"), ["x", "y"])
+
+    def test_ocr_chunks_are_written_one_at_a_time(self):
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF is not installed")
+        from services import ocr_client
+        from workers.parsers import pdf_limits
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        doc = pymupdf.open()
+        for i in range(45):
+            doc.new_page().insert_text((72, 72), f"Sayfa {i} {tmp.name}")
+        doc.save(str(tmp / "uzun.pdf"))
+
+        seen: list = []
+
+        async def fake_single(self, file_path, page_count):
+            folder = os.path.dirname(file_path)
+            seen.append((page_count, len(os.listdir(folder))))
+            return ocr_client.OCRResult(markdown=f"parca {page_count}", content_list=[], success=True, page_count=page_count)
+
+        client = ocr_client.PDFOCRClient(base_url="https://ocr.example.org", api_key="k", model=f"m-{tmp.name}")
+        with mock.patch.object(ocr_client.PDFOCRClient, "_parse_pdf_single", fake_single), mock.patch.object(
+            ocr_client, "OCR_PDF_CHUNK_PAGES", 20
+        ):
+            result = asyncio.run(client.parse_pdf(str(tmp / "uzun.pdf")))
+            self.assertTrue(result.success, result.error_message)
+            self.assertEqual([count for count, _ in seen], [20, 20, 5])
+            self.assertEqual({files for _, files in seen}, {1})
+            with mock.patch.object(pdf_limits, "PDF_MAX_PAGES", 30):
+                refused = asyncio.run(client.parse_pdf(str(tmp / "uzun.pdf")))
+            self.assertFalse(refused.success)
+            self.assertIn("45", refused.error_message)
