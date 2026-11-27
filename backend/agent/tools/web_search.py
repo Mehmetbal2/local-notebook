@@ -15,6 +15,8 @@ logger = logging.getLogger("tool.web_search")
 SEARXNG_PAGES_TO_READ = 3
 SEARXNG_PAGE_TIMEOUT = 8.0
 EXCERPT_CHARS = 1500
+# Text read from a PDF search hit before the relevant excerpt is chosen.
+PDF_MAX_TEXT_CHARS = 400_000
 
 
 class WebSearchParams(BaseModel):
@@ -155,18 +157,7 @@ class WebSearchTool(CallableTool2[WebSearchParams]):
 def _pdf_text(data: bytes, query: str) -> str:
     """Relevant text from the first pages of a PDF search hit."""
     from services.searxng_client import relevant_excerpt
+    from workers.parsers.pdf_limits import extract_plain_text
 
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        return ""
-    try:
-        with fitz.open(stream=data, filetype="pdf") as doc:
-            parts = [
-                "\n\n".join(b[4].replace("\n", " ").strip() for b in doc[i].get_text("blocks") if b[6] == 0)
-                for i in range(min(len(doc), 12))
-            ]
-    except Exception:
-        return ""
-    text = "\n\n".join(p.strip() for p in parts if p.strip())
-    return relevant_excerpt(text, query, EXCERPT_CHARS)
+    text = extract_plain_text(data, max_pages=12, max_chars=PDF_MAX_TEXT_CHARS)
+    return relevant_excerpt(text, query, EXCERPT_CHARS) if text else ""

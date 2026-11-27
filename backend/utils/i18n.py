@@ -202,6 +202,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "PyMuPDF is not installed for local PDF parsing. Run `pip install pymupdf` in the virtual environment, or choose the OCR service in Settings > PDF parsing.",
         "zh": "本地 PDF 解析需要 PyMuPDF。请在虚拟环境中运行 `pip install pymupdf`，或在「设置 → PDF 解析」中选择 OCR 服务。",
     },
+    # ---- PDF size limits ----
+    "pdf_too_many_pages": {"tr": "PDF çok fazla sayfa içeriyor ({count} sayfa; sınır {limit}). Güvenlik nedeniyle işlenmedi.", "en": "The PDF has too many pages ({count} pages; limit {limit}). It was not processed for safety.", "zh": "该 PDF 页数过多（{count} 页；上限 {limit}），出于安全考虑未处理。"},
+    "pdf_too_large": {"tr": "PDF açıldığında çok büyük bir içeriğe dönüşüyor (sınır {limit} MB). Güvenlik nedeniyle işlenmedi.", "en": "The PDF expands to an unreasonable amount of content when opened (limit {limit} MB). It was not processed for safety.", "zh": "该 PDF 展开后内容过大（上限 {limit} MB），出于安全考虑未处理。"},
     # ---- EPUB ----
     "archive_too_large": {"tr": "Belge açıldığında çok büyük bir boyuta ulaşıyor ({size} MB, {count} parça; sınır {limit} MB). Güvenlik nedeniyle işlenmedi.", "en": "The document expands to an unreasonable size when unpacked ({size} MB, {count} parts; limit {limit} MB). It was not processed for safety.", "zh": "该文档解压后体积过大（{size} MB，{count} 个部分；上限 {limit} MB），出于安全考虑未处理。"},
     "epub_corrupt": {"tr": "EPUB ayrıştırılamadı; dosya bozuk ya da biçimi standart dışı olabilir: {error}", "en": "The EPUB could not be parsed; the file may be damaged or malformed: {error}", "zh": "EPUB 解析失败,文件可能损坏或格式不规范: {error}"},

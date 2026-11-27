@@ -26,6 +26,7 @@ MAX_SOURCES = 28
 MIN_SOURCE_TEXT = 300
 EXCERPT_CHARS = 3200        # passage kept from each source for the report
 PDF_MAX_PAGES = 60
+PDF_MAX_TEXT_CHARS = 2_000_000  # text read from one PDF source
 FETCH_CONCURRENCY = 5
 
 PLAN_TIMEOUT = 240.0
@@ -142,19 +143,9 @@ async def _follow_up_queries(
 
 
 def _pdf_text(data: bytes) -> str:
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        return ""
-    try:
-        with fitz.open(stream=data, filetype="pdf") as doc:
-            pages = []
-            for i in range(min(len(doc), PDF_MAX_PAGES)):
-                blocks = doc[i].get_text("blocks")
-                pages.append("\n\n".join(b[4].replace("\n", " ").strip() for b in blocks if b[6] == 0))
-    except Exception:
-        return ""
-    return "\n\n".join(p for p in pages if p.strip())
+    from workers.parsers.pdf_limits import extract_plain_text
+
+    return extract_plain_text(data, max_pages=PDF_MAX_PAGES, max_chars=PDF_MAX_TEXT_CHARS)
 
 
 async def _gather_round(

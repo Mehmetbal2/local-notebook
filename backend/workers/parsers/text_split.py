@@ -1,5 +1,6 @@
 """Where to cut a long paragraph into display blocks."""
 import re
+from typing import List
 
 # Inline and display formulas, located the same way the source preview renders
 # them: `\$` is a literal dollar sign, an inline formula starts and ends with a
@@ -61,3 +62,28 @@ def find_paragraph_cut(remaining: str, max_chars: int, punctuation: str) -> int:
 
     # Nowhere safe (e.g. one very long formula): cut as before.
     return cut + 1
+
+
+def split_long_text(text: str, max_chars: int, punctuation: str) -> List[str]:
+    """Cut stripped `text` into blocks of at most `max_chars` with find_paragraph_cut.
+
+    Works with offsets into `text`: slicing off the remainder after every cut
+    copied the rest of the string each time, so one very long paragraph took
+    quadratic time. Each cut only looks at a bounded window, and the leading
+    whitespace of the next block is skipped as `str.strip` would.
+    """
+    chunks: List[str] = []
+    length = len(text)
+    start = 0
+    window_size = max_chars + _FORMULA_LOOKAHEAD
+    while length - start > max_chars:
+        cut = find_paragraph_cut(text[start : start + window_size], max_chars, punctuation)
+        chunk = text[start : start + cut].strip()
+        if chunk:
+            chunks.append(chunk)
+        start += cut
+        while start < length and text[start].isspace():
+            start += 1
+    if start < length:
+        chunks.append(text[start:])
+    return chunks

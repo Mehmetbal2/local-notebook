@@ -624,3 +624,208 @@ class DocxExportLocalFileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _old_split(text, max_chars, punctuation):
+    """The former splitter, kept to check that the linear one cuts identically."""
+    from workers.parsers.text_split import find_paragraph_cut
+
+    chunks, remaining = [], text
+    while len(remaining) > max_chars:
+        cut = find_paragraph_cut(remaining, max_chars, punctuation)
+        chunk = remaining[:cut].strip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[cut:].strip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+class SixthRoundTests(unittest.TestCase):
+    """AI Scan alerts #82-#86 (25 Nov 2026)."""
+
+    def test_long_paragraph_split_matches_former_cuts(self):
+        import random
+
+        from workers.parsers.text_split import split_long_text
+
+        rng = random.Random(7)
+        pieces = ["kelime", "uzun", "3.57", "p = .05", "$x+y$", "$$a^2$$", ". ", "! ", ": ", "  ", "\n", "؟", "。", "\\$", "a" * 40]
+        for _ in range(300):
+            text = "".join(rng.choice(pieces) + rng.choice(["", " "]) for _ in range(rng.randint(1, 900))).strip()
+            for max_chars in (40, 120, 600):
+                self.assertEqual(split_long_text(text, max_chars, "。！？!?؛;؟۔.:"), _old_split(text, max_chars, "。！？!?؛;؟۔.:"))
+
+    def test_one_huge_paragraph_splits_in_linear_time(self):
+        import time
+
+        from workers.parsers import html_parser, txt_parser
+
+        text = "abc " * 750_000  # 3 MB, no sentence punctuation
+        for module in (txt_parser, html_parser):
+            start = time.perf_counter()
+            chunks = module._split_long_paragraph(text)
+            self.assertLess(time.perf_counter() - start, 5, module.__name__)
+            self.assertEqual("".join(c.replace(" ", "") for c in chunks), text.replace(" ", ""))
+
+    def test_unclosed_table_and_break_tags_are_linear(self):
+        import time
+
+        from services.segment_service import _TABLE_OPEN_RE, _html_table_spans
+        from workers.parsers.html_parser import HtmlParser
+
+        start = time.perf_counter()
+        self.assertEqual(_html_table_spans("<table " * 60000 + "x"), [])
+        self.assertIsNone(_TABLE_OPEN_RE.search("<table " * 60000))
+        self.assertLess(time.perf_counter() - start, 1)
+        self.assertEqual(_html_table_spans('a <table class="t"><tr><td>1</td></tr></table> b'), [(2, 46)])
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        path = tmp / "b.html"
+        path.write_text("<html><body><p>Merhaba</p>" + "<br " * 60000 + "</body></html>", encoding="utf-8")
+        start = time.perf_counter()
+        asyncio.run(HtmlParser().parse(str(path)))
+        self.assertLess(time.perf_counter() - start, 5)
+
+    # ---------- PDF ----------
+
+    def _pymupdf(self):
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF is not installed")
+        return pymupdf
+
+    def _doc_with_content(self, content: bytes):
+        pymupdf = self._pymupdf()
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "Merhaba")
+        doc.update_stream(page.get_contents()[0], content)
+        return pymupdf.open(stream=doc.tobytes(deflate=True), filetype="pdf")
+
+    def test_highly_compressed_page_is_measured_without_expanding_it(self):
+        from workers.parsers.pdf_limits import page_content_size
+
+        bomb = self._doc_with_content(b"BT /helv 11 Tf 72 700 Td (A) Tj ET\n" + b" " * (4 * 1024 * 1024))
+        raw = len(bomb.xref_stream_raw(bomb[0].get_contents()[0]))
+        self.assertLess(raw, 64 * 1024)
+        self.assertIsNone(page_content_size(bomb, bomb[0], 1024 * 1024))
+        self.assertGreater(page_content_size(bomb, bomb[0], 8 * 1024 * 1024), 4 * 1024 * 1024)
+
+    def test_ascii85_flate_chain_is_decoded_with_a_bound(self):
+        import base64
+        import zlib
+
+        from workers.parsers.pdf_limits import page_content_size
+
+        def doc_with(content: bytes):
+            pymupdf = self._pymupdf()
+            doc = pymupdf.open()
+            page = doc.new_page()
+            page.insert_text((72, 72), "Merhaba")
+            xref = page.get_contents()[0]
+            doc.update_stream(xref, base64.a85encode(zlib.compress(content)) + b"~>", compress=False)
+            doc.xref_set_key(xref, "Filter", "[/ASCII85Decode /FlateDecode]")
+            return pymupdf.open(stream=doc.tobytes(), filetype="pdf")
+
+        small = doc_with(b"BT /helv 11 Tf 72 700 Td (Rapor) Tj ET\n")
+        self.assertIn("Rapor", small[0].get_text())
+        self.assertEqual(page_content_size(small, small[0], 1024 * 1024), len(small.xref_stream(small[0].get_contents()[0])))
+        bomb = doc_with(b"BT /helv 11 Tf 72 700 Td (A) Tj ET\n" + b" " * (4 * 1024 * 1024))
+        self.assertIsNone(page_content_size(bomb, bomb[0], 1024 * 1024))
+
+    def test_form_drawn_many_times_counts_every_drawing(self):
+        pymupdf = self._pymupdf()
+        from workers.parsers.pdf_limits import page_content_size
+
+        src = pymupdf.open()
+        src.new_page().insert_text((72, 72), "İç form metni")
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.show_pdf_page(pymupdf.Rect(0, 0, 300, 300), src, 0)
+        once = page_content_size(doc, page, 1024 * 1024)
+        self.assertIsNotNone(once)
+        name = next(n for _x, n, invoker, _b in page.get_xobjects() if invoker == 0)
+        drawing = b"q /" + name.encode() + b" Do Q "
+        doc.update_stream(page.get_contents()[-1], drawing * 20000)
+        self.assertIsNone(page_content_size(doc, doc[0], 1024 * 1024))
+
+    def test_shared_stream_on_many_pages_hits_the_document_budget(self):
+        from workers.parsers.pdf_limits import PdfBudget, PdfTooLarge
+
+        pymupdf = self._pymupdf()
+        doc = pymupdf.open()
+        first = doc.new_page()
+        first.insert_text((72, 72), "Merhaba")
+        shared = first.get_contents()[0]
+        resources = doc.xref_get_key(first.xref, "Resources")[1]
+        doc.update_stream(shared, b"BT /helv 11 Tf 72 700 Td (A) Tj ET\n" + b" " * (600 * 1024))
+        for _ in range(9):
+            xref = doc.new_page().xref
+            doc.xref_set_key(xref, "Contents", f"{shared} 0 R")
+            doc.xref_set_key(xref, "Resources", resources)
+        doc = pymupdf.open(stream=doc.tobytes(deflate=True), filetype="pdf")
+        self.assertEqual(doc.page_count, 10)
+        self.assertEqual({doc[i].get_contents()[0] for i in range(10)}, {doc[0].get_contents()[0]})
+        budget = PdfBudget(doc, page_limit=1024 * 1024, total_limit=2 * 1024 * 1024)
+        with self.assertRaises(PdfTooLarge):
+            list(budget.pages(range(doc.page_count)))
+        with self.assertRaises(PdfTooLarge):
+            PdfBudget(doc, max_pages=5)
+
+    def test_text_extraction_never_decodes_images(self):
+        pymupdf = self._pymupdf()
+        from workers.parsers.pdf_limits import text_flags
+
+        self.assertFalse(text_flags(pymupdf) & pymupdf.TEXT_PRESERVE_IMAGES)
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 64, 64), False)
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "Metin")
+        page.insert_image(pymupdf.Rect(72, 100, 272, 300), pixmap=pix)
+        types = {b["type"] for b in page.get_text("dict", flags=text_flags(pymupdf))["blocks"]}
+        self.assertEqual(types, {0})
+
+    def test_parser_refuses_documents_over_the_limits(self):
+        pymupdf = self._pymupdf()
+        from workers.parsers import pdf_limits, pymupdf_parser
+        from workers.parsers.pdf_limits import PdfTooLarge
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        bomb = self._doc_with_content(b"BT /helv 11 Tf 72 700 Td (A) Tj ET\n" + b" " * (2 * 1024 * 1024))
+        bomb.save(str(tmp / "bomb.pdf"))
+        with mock.patch.object(pdf_limits, "PDF_MAX_PAGE_CONTENT_BYTES", 1024 * 1024):
+            with self.assertRaises(PdfTooLarge):
+                pymupdf_parser.PyMuPDFParser().parse(str(tmp / "bomb.pdf"))
+
+        doc = pymupdf.open()
+        for i in range(5):
+            doc.new_page().insert_text((72, 72), f"Sayfa {i} " + "metin " * 40)
+        doc.save(str(tmp / "ok.pdf"))
+        self.assertEqual(pymupdf_parser.PyMuPDFParser().parse(str(tmp / "ok.pdf")).page_count, 5)
+        with mock.patch.object(pymupdf_parser, "PDF_MAX_TEXT_CHARS", 300):
+            with self.assertRaises(PdfTooLarge):
+                pymupdf_parser.PyMuPDFParser().parse(str(tmp / "ok.pdf"))
+
+    def test_web_pdf_text_is_capped(self):
+        pymupdf = self._pymupdf()
+        from agent.tools import web_search
+        from workers import deep_research
+        from workers.parsers.pdf_limits import extract_plain_text
+
+        doc = pymupdf.open()
+        for i in range(3):
+            doc.new_page().insert_text((72, 72), f"Sayfa {i} kaynak metni")
+        data = doc.tobytes()
+        self.assertIn("Sayfa 2 kaynak metni", extract_plain_text(data, max_pages=12, max_chars=10_000))
+        self.assertEqual(len(extract_plain_text(data, max_pages=12, max_chars=10)), 10)
+        self.assertIn("kaynak", web_search._pdf_text(data, "kaynak"))
+        self.assertIn("Sayfa 0", deep_research._pdf_text(data))
+
+        bomb = self._doc_with_content(b"BT /helv 11 Tf 72 700 Td (A) Tj ET\n" + b" " * (9 * 1024 * 1024))
+        self.assertEqual(extract_plain_text(bomb.tobytes(deflate=True), max_pages=12, max_chars=10_000), "")
+        self.assertEqual(extract_plain_text(b"not a pdf", max_pages=12, max_chars=10_000), "")

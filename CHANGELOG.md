@@ -12,6 +12,8 @@ Bu projedeki önemli değişiklikler bu dosyada tutulur. Sürüm numaraları [An
 - Web kaynağı içe aktarma ve web araması artık yalnızca genel internetteki adresleri indirir; yerel ağ, sunucunun kendisi ve bulut meta veri adresleri (yönlendirmeler dahil) engellenir. Güvenilir tek kullanıcılı kurulumda `WEB_FETCH_ALLOW_PRIVATE=1` ile açılabilir.
 - Dosya yüklemelerinde oturum ve boyut sınırı (`MAX_UPLOAD_MB`, varsayılan 500 MB) gövde okunmadan denetlenir; oturum açmamış biri sunucu diskini dolduramaz.
 - Açıldığında aşırı büyüyen EPUB/DOCX dosyaları ("zip bombası") işlenmez (`ARCHIVE_MAX_UNCOMPRESSED_MB`, varsayılan 512 MB).
+- PDF metni çıkarılmadan önce her sayfanın açılmış içerik boyutu (form nesnelerinin her çizimi dahil) sınırlı açma ile ölçülür; aşırı büyüyen sayfalar atlanır, çok sayfalı, toplamda aşırı büyüyen ya da çok fazla metin üreten PDF'ler işlenmez (`PDF_MAX_PAGES`, `PDF_MAX_PAGE_CONTENT_MB`, `PDF_MAX_CONTENT_MB`, `PDF_MAX_TEXT_MB`). Metin çıkarılırken görseller artık çözülmez; web aramasında ve derin araştırmada okunan PDF'ler de aynı ölçümden geçer.
+- Tek ve çok uzun bir paragraf içeren TXT/Markdown/HTML dosyalarının bölünmesi doğrusal süreye indirildi; kapanmamış `<table`/`<br` etiketleriyle dolu dosyalar artık yavaşlamaya yol açmaz.
 - DOCX dışa aktarımında markdown görsel bağlantıları artık sunucudaki dosyaları belgeye gömemez.
 - `[citation_0-citation_999999999]` gibi dev atıf aralıkları açılmaz; bellek tükenmesi önlendi.
 - Docker Compose: Redis ve Milvus yalnızca `127.0.0.1` üzerinden yayınlanır (parolasız Redis üzerinden kod çalıştırma ve Milvus'a doğrudan erişim engellendi).

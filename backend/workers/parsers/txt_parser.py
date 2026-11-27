@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from utils.text_decoding import read_text_file
 
 from .base import BaseParser, Block, ParseResult
-from .text_split import find_paragraph_cut
+from .text_split import split_long_text
 
 _TANZIL_AYAH_RE = re.compile(r"^(\d{1,3})\|(\d{1,3})\|(.+)$")
 
@@ -61,18 +61,7 @@ def _split_long_paragraph(text: str, max_chars: int = 600) -> List[str]:
     text = _clean_text(text)
     if len(text) <= max_chars:
         return [text] if text else []
-
-    chunks: List[str] = []
-    remaining = text
-    while len(remaining) > max_chars:
-        cut = find_paragraph_cut(remaining, max_chars, _SPLIT_PUNCTUATION)
-        chunk = remaining[:cut].strip()
-        if chunk:
-            chunks.append(chunk)
-        remaining = remaining[cut:].strip()
-    if remaining:
-        chunks.append(remaining)
-    return chunks
+    return split_long_text(text, max_chars, _SPLIT_PUNCTUATION)
 
 
 def _looks_like_tanzil(lines: List[str], file_path: Optional[str]) -> bool:

@@ -118,6 +118,10 @@ the vectors; in server mode it does not.
 | `LOGIN_MAX_FAILURES` / `LOGIN_MAX_FAILURES_PER_ADDRESS` / `LOGIN_MAX_FAILURES_PER_USER` / `LOGIN_WINDOW_SECONDS` | `10` / `50` / `30` / `900` | Failed sign-ins allowed per user name and address, per address, per user name from any address, and the window; then 429 |
 | `BACKEND_HOST` | `127.0.0.1` | Address `start.sh` binds the API to. Other devices use the API through the interface port; set `0.0.0.0` only to expose the API directly |
 | `ARCHIVE_MAX_UNCOMPRESSED_MB` | `512` | Largest unpacked size of an EPUB/DOCX (zip bomb guard) |
+| `PDF_MAX_PAGES` | `5000` | PDFs with more pages are refused |
+| `PDF_MAX_PAGE_CONTENT_MB` | `32` | Largest expanded content of one PDF page (content streams plus every form drawing); larger pages are skipped |
+| `PDF_MAX_CONTENT_MB` | `1024` | Largest expanded content of a whole PDF, a shared stream counted once per page |
+| `PDF_MAX_TEXT_MB` | `64` | Most text (million characters) one PDF may yield |
 | `WEB_FETCH_ALLOW_PRIVATE` | off | Set to `1` to let web-source import and web search read pages on loopback/private/link-local addresses (intranet). Off by default so users cannot reach server-internal services |
 | `SQLITE_JOURNAL_MODE` | `WAL` | SQLite journal mode |
 | `RESTORE_MAX_ARCHIVE_BYTES` | `4294967296` (4 GiB) | Upload size limit for a restore archive |

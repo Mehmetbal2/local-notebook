@@ -52,10 +52,13 @@ class PDFParser(BaseParser):
 
         # auto: local for PDFs with a text layer, OCR for scans; local is also the
         # fallback when no OCR service is configured.
+        from .pdf_limits import PdfTooLarge
         from .pymupdf_parser import has_text_layer
 
         try:
             text_layer, _ = await asyncio.to_thread(has_text_layer, file_path)
+        except PdfTooLarge:
+            raise  # a document over the size limits is not sent anywhere else
         except RuntimeError:
             text_layer = False
             if not ocr_ready:
@@ -63,6 +66,8 @@ class PDFParser(BaseParser):
         if text_layer or not ocr_ready:
             try:
                 return await self._parse_locally(file_path, file_id)
+            except PdfTooLarge:
+                raise
             except Exception as exc:
                 if not ocr_ready:
                     raise
@@ -427,14 +432,14 @@ class PDFParser(BaseParser):
             return ""
 
         text = unescape(html_table)
-        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', text, re.DOTALL | re.IGNORECASE)
+        rows = re.findall(r'<tr[^<>]*>(.*?)</tr>', text, re.DOTALL | re.IGNORECASE)
 
         if not rows:
             return ""
 
         md_rows = []
         for i, row in enumerate(rows):
-            cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL | re.IGNORECASE)
+            cells = re.findall(r'<t[dh][^<>]*>(.*?)</t[dh]>', row, re.DOTALL | re.IGNORECASE)
             clean_cells = []
             for cell in cells:
                 cell_text = re.sub(r'<[^<>]+>', '', cell)

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import Block, ParseResult
+from .pdf_limits import PDF_MAX_TEXT_CHARS, PdfBudget, PdfTooLarge, text_flags
 from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger("parsers.pymupdf")
@@ -110,13 +111,14 @@ def has_text_layer(file_path: str, sample_pages: int = 8) -> Tuple[bool, int]:
         page_count = doc.page_count
         if page_count == 0:
             return False, 0
+        budget = PdfBudget(doc)
         step = max(1, page_count // sample_pages)
         sampled = 0
         chars = 0
-        for index in range(0, page_count, step):
+        for index in budget.pages(range(0, page_count, step)):
             if sampled >= sample_pages:
                 break
-            chars += len(doc[index].get_text("text").strip())
+            chars += len(doc[index].get_text("text", flags=text_flags(pymupdf)).strip())
             sampled += 1
         return (chars / max(sampled, 1)) >= _MIN_TEXT_CHARS_PER_PAGE, page_count
 
@@ -137,16 +139,18 @@ class PyMuPDFParser:
 
         with pymupdf.open(file_path) as doc:
             page_count = doc.page_count
-            body_size = self._body_font_size(doc)
-            repeated = self._repeated_edge_lines(doc)
+            budget = PdfBudget(doc)
+            flags = text_flags(pymupdf)
+            body_size = self._body_font_size(doc, budget, flags)
+            repeated = self._repeated_edge_lines(doc, budget, flags)
 
-            for page_index in range(page_count):
+            for page_index in budget.pages(range(page_count)):
                 page = doc[page_index]
                 width, height = page.rect.width, page.rect.height
                 page_no = page_index + 1
 
                 table_regions, table_blocks = self._extract_tables(page, page_no, width, height)
-                paragraphs = self._page_paragraphs(page, table_regions, repeated)
+                paragraphs = self._page_paragraphs(page, table_regions, repeated, flags)
                 image_blocks = self._extract_images(doc, page, page_no, width, height, images)
 
                 # Merge text, tables and images in top-to-bottom order.
@@ -163,6 +167,11 @@ class PyMuPDFParser:
                     block.position = {"start": position, "end": position + len(block.content)}
                     position += len(block.content) + 1
                     blocks.append(block)
+                if position > PDF_MAX_TEXT_CHARS:
+                    raise PdfTooLarge(ui_msg("pdf_too_large", limit=PDF_MAX_TEXT_CHARS // (1024 * 1024)))
+
+            if budget.skipped and not blocks:
+                raise PdfTooLarge(ui_msg("pdf_too_large", limit=budget.page_limit // (1024 * 1024)))
 
         for index, block in enumerate(blocks):
             block.id = f"b_{index}"
@@ -174,11 +183,11 @@ class PyMuPDFParser:
     # ---------- document-level statistics ----------
 
     @staticmethod
-    def _body_font_size(doc) -> float:
+    def _body_font_size(doc, budget: PdfBudget, flags: int) -> float:
         sizes: List[float] = []
         step = max(1, doc.page_count // 12)
-        for index in range(0, doc.page_count, step):
-            for block in doc[index].get_text("dict").get("blocks", []):
+        for index in budget.pages(range(0, doc.page_count, step)):
+            for block in doc[index].get_text("dict", flags=flags).get("blocks", []):
                 for line in block.get("lines", []):
                     for span in line.get("spans", []):
                         text = span.get("text", "").strip()
@@ -189,18 +198,18 @@ class PyMuPDFParser:
         return statistics.median(sizes) if sizes else 11.0
 
     @staticmethod
-    def _repeated_edge_lines(doc) -> set:
+    def _repeated_edge_lines(doc, budget: PdfBudget, flags: int) -> set:
         """Running headers/footers: short lines at the page edge that recur on many pages."""
         if doc.page_count < 4:
             return set()
         counts: Dict[str, int] = {}
         step = max(1, doc.page_count // 20)
         sampled = 0
-        for index in range(0, doc.page_count, step):
+        for index in budget.pages(range(0, doc.page_count, step)):
             page = doc[index]
             height = page.rect.height
             seen = set()
-            for block in page.get_text("dict").get("blocks", []):
+            for block in page.get_text("dict", flags=flags).get("blocks", []):
                 y0, y1 = block.get("bbox", (0, 0, 0, 0))[1], block.get("bbox", (0, 0, 0, 0))[3]
                 if y1 > height * 0.12 and y0 < height * 0.88:
                     continue
@@ -216,12 +225,12 @@ class PyMuPDFParser:
 
     # ---------- text ----------
 
-    def _page_paragraphs(self, page, table_regions, repeated: set) -> List[_Para]:
+    def _page_paragraphs(self, page, table_regions, repeated: set, flags: int) -> List[_Para]:
         width, height = page.rect.width, page.rect.height
         paragraphs: List[_Para] = []
         pymupdf = _import_pymupdf()
 
-        text_blocks = [b for b in page.get_text("dict").get("blocks", []) if b.get("type") == 0]
+        text_blocks = [b for b in page.get_text("dict", flags=flags).get("blocks", []) if b.get("type") == 0]
         for block in self._reading_order(text_blocks, width):
             rect = pymupdf.Rect(block["bbox"])
             if any(self._overlaps(rect, region) for region in table_regions):

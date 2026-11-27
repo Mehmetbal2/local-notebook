@@ -10,7 +10,7 @@ from urllib.parse import unquote
 from utils.text_decoding import read_text_file
 
 from .base import BaseParser, Block, ParseResult
-from .text_split import find_paragraph_cut
+from .text_split import split_long_text
 
 try:  # BeautifulSoup is already a project dependency (EPUB parsing).
     from bs4 import BeautifulSoup, NavigableString, Tag
@@ -49,21 +49,7 @@ def _split_long_paragraph(text: str, max_chars: int = 800) -> List[str]:
     text = _clean_text(text)
     if len(text) <= max_chars:
         return [text] if text else []
-
-    chunks: List[str] = []
-    remaining = text
-    punctuation = "。！？!?؛;؟۔.:"
-
-    while len(remaining) > max_chars:
-        cut = find_paragraph_cut(remaining, max_chars, punctuation)
-        chunk = remaining[:cut].strip()
-        if chunk:
-            chunks.append(chunk)
-        remaining = remaining[cut:].strip()
-
-    if remaining:
-        chunks.append(remaining)
-    return chunks
+    return split_long_text(text, max_chars, "。！？!?؛;؟۔.:")
 
 
 def _parse_page_locator(text: str, default: int) -> Tuple[Optional[int], int]:
@@ -145,16 +131,18 @@ class HtmlParser(BaseParser):
         close_p = len(re.findall(r"</p\s*>", raw_html, flags=re.IGNORECASE))
         orphan_paragraphs = close_p > max(open_p * 3, open_p + 50)
 
+        # `[^<>]*` keeps each attempt inside one tag; `[^>]*` let an unclosed
+        # `<br` scan the rest of the file, once per occurrence.
         if orphan_paragraphs:
             normalized_html = re.sub(
-                r"</?p\b[^>]*>|<br\b[^>]*/?>|<hr\b[^>]*/?>",
+                r"</?p\b[^<>]*>|<br\b[^<>]*>|<hr\b[^<>]*>",
                 "\n",
                 raw_html,
                 flags=re.IGNORECASE,
             )
         else:
             normalized_html = re.sub(
-                r"<br\b[^>]*/?>|<hr\b[^>]*/?>",
+                r"<br\b[^<>]*>|<hr\b[^<>]*>",
                 "\n",
                 raw_html,
                 flags=re.IGNORECASE,

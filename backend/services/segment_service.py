@@ -5,7 +5,9 @@ from typing import List, Dict, Any
 from dataclasses import dataclass, field
 
 
-_TABLE_OPEN_RE = re.compile(r"<table(?=[\s>/])[^>]*>", re.IGNORECASE)
+# `[^<>]*` stops at the next tag: with `[^>]*` an unclosed `<table ` let the match
+# run across every later tag, so a run of them was rescanned from each one.
+_TABLE_OPEN_RE = re.compile(r"<table(?=[\s>/])[^<>]*>", re.IGNORECASE)
 
 
 def _html_table_spans(text: str) -> list[tuple[int, int]]:
