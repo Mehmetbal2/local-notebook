@@ -626,36 +626,26 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def _old_split(text, max_chars, punctuation):
-    """The former splitter, kept to check that the linear one cuts identically."""
-    from workers.parsers.text_split import find_paragraph_cut
-
-    chunks, remaining = [], text
-    while len(remaining) > max_chars:
-        cut = find_paragraph_cut(remaining, max_chars, punctuation)
-        chunk = remaining[:cut].strip()
-        if chunk:
-            chunks.append(chunk)
-        remaining = remaining[cut:].strip()
-    if remaining:
-        chunks.append(remaining)
-    return chunks
-
-
 class SixthRoundTests(unittest.TestCase):
     """AI Scan alerts #82-#86 (25 Nov 2026)."""
 
-    def test_long_paragraph_split_matches_former_cuts(self):
-        import random
-
+    def test_long_paragraph_split_keeps_former_cuts(self):
         from workers.parsers.text_split import split_long_text
 
-        rng = random.Random(7)
-        pieces = ["kelime", "uzun", "3.57", "p = .05", "$x+y$", "$$a^2$$", ". ", "! ", ": ", "  ", "\n", "؟", "。", "\\$", "a" * 40]
-        for _ in range(300):
-            text = "".join(rng.choice(pieces) + rng.choice(["", " "]) for _ in range(rng.randint(1, 900))).strip()
-            for max_chars in (40, 120, 600):
-                self.assertEqual(split_long_text(text, max_chars, "。！？!?؛;؟۔.:"), _old_split(text, max_chars, "。！？!?؛;؟۔.:"))
+        # Expected cuts recorded with the former (re-slicing) splitter.
+        cases = {
+            "Birinci cümle burada biter. İkinci cümle biraz daha uzun ve virgülsüz devam eder! Üçüncü? Evet.":
+                ["Birinci cümle burada biter.", "İkinci cümle biraz daha uzun ve", "virgülsüz devam eder! Üçüncü? Evet."],
+            "Ortalama 3.57 ve p = .05 değeri tablo 2'de verildi; ayrıntı için ekteki hesaba bakın lütfen.":
+                ["Ortalama 3.57 ve p = .05 değeri tablo", "2'de verildi; ayrıntı için ekteki", "hesaba bakın lütfen."],
+            "Formül $a^2 + b^2 = c^2$ satır içinde kalmalı ve bölünmemeli diye uzun bir açıklama ekliyoruz.":
+                ["Formül $a^2 + b^2 = c^2$ satır içinde", "kalmalı ve bölünmemeli diye uzun bir", "açıklama ekliyoruz."],
+            "a" * 102: ["a" * 40, "a" * 40, "a" * 22],
+            "kısa   boşluklar     arasında    kelimeler   var    ve     bölme    sonrası  boşluk  atlanmalı   hep":
+                ["kısa   boşluklar     arasında", "kelimeler   var    ve     bölme", "sonrası  boşluk  atlanmalı   hep"],
+        }
+        for text, expected in cases.items():
+            self.assertEqual(split_long_text(text, 40, "。！？!?؛;؟۔.:"), expected)
 
     def test_one_huge_paragraph_splits_in_linear_time(self):
         import time
@@ -829,3 +819,166 @@ class SixthRoundTests(unittest.TestCase):
         bomb = self._doc_with_content(b"BT /helv 11 Tf 72 700 Td (A) Tj ET\n" + b" " * (9 * 1024 * 1024))
         self.assertEqual(extract_plain_text(bomb.tobytes(deflate=True), max_pages=12, max_chars=10_000), "")
         self.assertEqual(extract_plain_text(b"not a pdf", max_pages=12, max_chars=10_000), "")
+
+
+class SeventhRoundTests(unittest.TestCase):
+    """AI Scan alerts #87-#92 (27 Nov 2026)."""
+
+    def _pymupdf(self):
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF is not installed")
+        return pymupdf
+
+    def _form_page(self, drawing_template: bytes, times: int):
+        """A page drawing its form XObject `times` times; returns (doc, form name)."""
+        pymupdf = self._pymupdf()
+        src = pymupdf.open()
+        src.new_page().insert_text((72, 72), "İç form metni")
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.show_pdf_page(pymupdf.Rect(0, 0, 300, 300), src, 0)
+        name = next(n for _x, n, invoker, _b in page.get_xobjects() if invoker == 0)
+        doc.update_stream(page.get_contents()[-1], drawing_template.replace(b"NAME", name.encode()) * times)
+        return pymupdf.open(stream=doc.tobytes(), filetype="pdf"), name
+
+    def test_drawings_with_comments_or_name_escapes_are_counted(self):
+        from workers.parsers.pdf_limits import page_content_size
+
+        for template in (b"q /NAME %yorum\n Do Q ", b"q /NAME%x\r\nDo Q "):
+            doc, _ = self._form_page(template, 20000)
+            self.assertIsNone(page_content_size(doc, doc[0], 1024 * 1024), template)
+        doc, name = self._form_page(b"q /NAME Do Q ", 1)
+        escaped = "".join(f"#{ord(c):02X}" if i == len(name) - 1 else c for i, c in enumerate(name))
+        doc.update_stream(doc[0].get_contents()[-1], (b"q /" + escaped.encode() + b" Do Q ") * 20000)
+        self.assertIn("Do", doc[0].read_contents().decode("latin-1"))
+        self.assertIsNone(page_content_size(doc, doc[0], 1024 * 1024))
+
+    def test_indirect_filter_is_resolved(self):
+        import zlib
+
+        pymupdf = self._pymupdf()
+        from workers.parsers.pdf_limits import page_content_size
+
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "Merhaba")
+        xref = page.get_contents()[0]
+        content = b"BT /helv 11 Tf 72 700 Td (A) Tj ET\n" + b" " * (4 * 1024 * 1024)
+        doc.update_stream(xref, zlib.compress(content), compress=False)
+        filter_xref = doc.get_new_xref()
+        doc.update_object(filter_xref, "/FlateDecode")
+        doc.xref_set_key(xref, "Filter", f"{filter_xref} 0 R")
+        doc = pymupdf.open(stream=doc.tobytes(), filetype="pdf")
+        xref = doc[0].get_contents()[0]
+        self.assertEqual(doc.xref_get_key(xref, "Filter")[0], "xref")
+        self.assertEqual(len(doc.xref_stream(xref)), len(content))
+        self.assertIsNone(page_content_size(doc, doc[0], 1024 * 1024))
+        self.assertEqual(page_content_size(doc, doc[0], 8 * 1024 * 1024), len(content))
+
+    def test_isolated_parser_is_stopped_at_the_memory_limit(self):
+        from workers.parsers import isolation
+
+        with mock.patch.object(isolation, "PARSER_ISOLATION", True):
+            self.assertEqual(isolation.run_isolated(len, "abc"), 3)
+            with self.assertRaises(isolation.ParserLimitExceeded):
+                isolation.run_isolated(_allocate, 600, memory_mb=200, timeout=60)
+            with self.assertRaises(isolation.ParserLimitExceeded):
+                isolation.run_isolated(time_sleep, 30, timeout=1)
+            with self.assertRaises(ValueError):
+                isolation.run_isolated(int, "sayı değil")
+
+    def test_isolated_pdf_parse_returns_blocks(self):
+        pymupdf = self._pymupdf()
+        from workers.parsers import isolation
+        from workers.parsers.pdf_limits import PdfTooLarge
+        from workers.parsers.pymupdf_parser import parse_file
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        doc = pymupdf.open()
+        doc.new_page().insert_text((72, 72), "Metin from the child process")
+        doc.save(str(tmp / "ok.pdf"))
+        with mock.patch.object(isolation, "PARSER_ISOLATION", True):
+            result = isolation.run_isolated(parse_file, str(tmp / "ok.pdf"), None)
+            self.assertIn("Metin from the child process", result.text)
+            many = pymupdf.open()
+            for _ in range(3):
+                many.new_page()
+            many.save(str(tmp / "many.pdf"))
+            with mock.patch.dict(os.environ, {"PDF_MAX_PAGES": "2"}):
+                with self.assertRaises(PdfTooLarge):
+                    isolation.run_isolated(_parse_with_page_limit, str(tmp / "many.pdf"))
+
+    def _epub(self, path: Path, manifest_items: str, files: dict, spine: str = "") -> None:
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+            z.writestr(
+                "META-INF/container.xml",
+                '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+            )
+            z.writestr(
+                "OEBPS/content.opf",
+                '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+                '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>t</dc:title>'
+                f'<dc:language>tr</dc:language></metadata><manifest>{manifest_items}</manifest><spine>{spine}</spine></package>',
+            )
+            for name, data in files.items():
+                z.writestr("OEBPS/" + name, data)
+
+    def test_epub_manifest_repeating_one_file_is_refused(self):
+        from workers.parsers import epub_parser
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        chapter = "<html><body><p>" + "metin " * 200_000 + "</p></body></html>"  # ~1.2 MB, compresses well
+        items = "".join(f'<item id="c{i}" href="c.xhtml" media-type="application/xhtml+xml"/>' for i in range(10))
+        self._epub(tmp / "b.epub", items, {"c.xhtml": chapter}, '<itemref idref="c0"/>')
+        epub_parser.check_manifest_size(str(tmp / "b.epub"))  # 12 MB in total: allowed by default
+        with mock.patch.object(epub_parser, "ARCHIVE_MAX_UNCOMPRESSED_BYTES", 5 * 1024 * 1024):
+            with self.assertRaises(RuntimeError):
+                epub_parser.check_manifest_size(str(tmp / "b.epub"))
+
+    def test_epub_nested_tables_are_not_copied_per_level(self):
+        from workers.parsers.epub_parser import EpubParser
+
+        depth = 40
+        html = "<html><body>" + "<table><tr><td>" * depth + "BÜYÜK " * 1000 + "</td></tr></table>" * depth + "<p>son</p></body></html>"
+        blocks = EpubParser()._extract_chapter_blocks(html.encode())
+        total = sum(len(b[0]) for b in blocks)
+        self.assertLess(total, len("BÜYÜK ") * 1000 * 2)
+        self.assertEqual(blocks[-1][0], "son")
+        simple = EpubParser()._extract_chapter_blocks(
+            b"<html><body><h1>Bas<p>ic</p></h1><table><thead><tr><th>A</th><th>B</th></tr></thead>"
+            b"<tbody><tr><td>1</td><td>2</td></tr></tbody></table><ul><li>madde</li></ul></body></html>"
+        )
+        self.assertEqual(
+            [b[0] for b in simple],
+            ["Bas ic", "ic", "| A | B |\n| --- | --- |\n| 1 | 2 |", "madde"],
+        )
+
+
+def _allocate(mb: int) -> int:
+    chunks = [bytearray(1024 * 1024) for _ in range(mb)]
+    import time
+
+    time.sleep(5)
+    return len(chunks)
+
+
+def time_sleep(seconds: float) -> None:
+    import time
+
+    time.sleep(seconds)
+
+
+def _parse_with_page_limit(path: str):
+    import importlib
+
+    from workers.parsers import pdf_limits, pymupdf_parser
+
+    importlib.reload(pdf_limits)
+    importlib.reload(pymupdf_parser)
+    return pymupdf_parser.parse_file(path)

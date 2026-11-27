@@ -52,12 +52,13 @@ class PDFParser(BaseParser):
 
         # auto: local for PDFs with a text layer, OCR for scans; local is also the
         # fallback when no OCR service is configured.
+        from .isolation import ParserLimitExceeded, run_isolated
         from .pdf_limits import PdfTooLarge
         from .pymupdf_parser import has_text_layer
 
         try:
-            text_layer, _ = await asyncio.to_thread(has_text_layer, file_path)
-        except PdfTooLarge:
+            text_layer, _ = await asyncio.to_thread(run_isolated, has_text_layer, file_path)
+        except (PdfTooLarge, ParserLimitExceeded):
             raise  # a document over the size limits is not sent anywhere else
         except RuntimeError:
             text_layer = False
@@ -66,7 +67,7 @@ class PDFParser(BaseParser):
         if text_layer or not ocr_ready:
             try:
                 return await self._parse_locally(file_path, file_id)
-            except PdfTooLarge:
+            except (PdfTooLarge, ParserLimitExceeded):
                 raise
             except Exception as exc:
                 if not ocr_ready:
@@ -75,11 +76,12 @@ class PDFParser(BaseParser):
         return await self._parse_with_ocr(file_path, base_url, model, api_key)
 
     async def _parse_locally(self, file_path: str, file_id: str | None) -> ParseResult:
-        from .pymupdf_parser import PyMuPDFParser
+        from .isolation import run_isolated
+        from .pymupdf_parser import parse_file
 
         image_dir = Path(file_path).parent / "images" / file_id if file_id else None
-        parser = PyMuPDFParser(image_dir=image_dir)
-        result = await asyncio.to_thread(parser.parse, file_path)
+        # In a child process with a memory and time limit: see isolation.py.
+        result = await asyncio.to_thread(run_isolated, parse_file, file_path, image_dir)
         if not result.blocks:
             raise RuntimeError(ui_msg("pdf_no_text"))
         return result

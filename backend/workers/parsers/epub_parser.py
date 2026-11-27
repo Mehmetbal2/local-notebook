@@ -1,8 +1,12 @@
 import asyncio
+import posixpath
 import re
+import zipfile
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import unquote
+from xml.etree import ElementTree
 
-from .base import BaseParser, Block, ParseResult, check_zip_archive
+from .base import ARCHIVE_MAX_UNCOMPRESSED_BYTES, BaseParser, Block, ParseResult, check_zip_archive
 from utils.i18n import msg as ui_msg
 
 
@@ -28,13 +32,17 @@ class EpubParser(BaseParser):
         return [".epub"]
 
     async def parse(self, file_path: str) -> ParseResult:
-        return await asyncio.to_thread(self._parse_sync, file_path)
+        from .isolation import run_isolated
+
+        # In a child process with a memory and time limit: see isolation.py.
+        return await asyncio.to_thread(run_isolated, parse_file, file_path)
 
     def _parse_sync(self, file_path: str) -> ParseResult:
         import ebooklib
         from ebooklib import epub
 
         check_zip_archive(file_path)
+        check_manifest_size(file_path)
         try:
             book = epub.read_epub(file_path)
         except Exception as exc:  # damaged file / invalid zip / missing OPF
@@ -191,11 +199,7 @@ class EpubParser(BaseParser):
         body = soup.body or soup
         blocks: List[Tuple[str, str, Dict[str, Any]]] = []
 
-        for el in body.find_all(_BLOCK_TAGS):
-            # take outermost blocks only; skip elements nested in other blocks to avoid extracting them twice
-            if any(p.name in _CONTAINER_TAGS for p in el.parents):
-                continue
-
+        for el in self._outermost_blocks(body):
             name = el.name.lower()
 
             if name == "table":
@@ -228,14 +232,47 @@ class EpubParser(BaseParser):
         text = re.sub(r"\s*\n\s*", " ", text)
         return text.strip()
 
+    @staticmethod
+    def _outermost_blocks(body):
+        """Block elements in document order, skipping those inside another block.
+
+        A walk from the top that does not descend into container blocks; checking
+        every element's ancestors instead took time proportional to the square of
+        the nesting depth.
+        """
+        stack = [child for child in reversed(list(body.children)) if getattr(child, "name", None)]
+        while stack:
+            el = stack.pop()
+            name = el.name.lower()
+            if name in _BLOCK_TAGS:
+                yield el
+            if name not in _CONTAINER_TAGS:
+                stack.extend(child for child in reversed(list(el.children)) if getattr(child, "name", None))
+
+    @staticmethod
+    def _own_rows(table_el) -> list:
+        """Rows of this table only; rows of nested tables stay inside their cell's text.
+
+        find_all("tr") also returned every nested row while each enclosing cell's
+        text already held it, so text was copied once per nesting level.
+        """
+        rows = []
+        for child in table_el.children:
+            name = getattr(child, "name", None)
+            if name == "tr":
+                rows.append(child)
+            elif name in ("thead", "tbody", "tfoot"):
+                rows.extend(c for c in child.children if getattr(c, "name", None) == "tr")
+        return rows
+
     def _table_to_markdown(self, table_el) -> str:
-        rows = table_el.find_all("tr")
+        rows = self._own_rows(table_el)
         if not rows:
             return ""
 
         md_rows: List[str] = []
         for i, row in enumerate(rows):
-            cells = row.find_all(["td", "th"])
+            cells = row.find_all(["td", "th"], recursive=False)
             clean = [self._normalize_text(c.get_text(separator=" ")) for c in cells]
             if not clean:
                 continue
@@ -273,3 +310,45 @@ class EpubParser(BaseParser):
             contents.append(content)
 
         return blocks, "\n".join(contents)
+
+
+def parse_file(file_path: str) -> ParseResult:
+    """EpubParser()._parse_sync as a module-level function, so it can run in a child process."""
+    return EpubParser()._parse_sync(file_path)
+
+
+def check_manifest_size(file_path: str) -> None:
+    """Raise RuntimeError when the manifest makes EbookLib load too much.
+
+    EbookLib reads the file of every manifest entry into memory, one copy per
+    entry, so one large chapter listed under many ids is loaded many times even
+    though the archive's declared size counts it once.
+    """
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            sizes = {info.filename: info.file_size for info in archive.infolist()}
+            container = ElementTree.fromstring(archive.read("META-INF/container.xml"))
+            rootfile = next((el.get("full-path") for el in container.iter() if el.tag.endswith("rootfile")), None)
+            if not rootfile:
+                return
+            opf = ElementTree.fromstring(archive.read(rootfile))
+    except (KeyError, zipfile.BadZipFile, ElementTree.ParseError, OSError):
+        return  # read_epub reports the damaged file
+    base = posixpath.dirname(rootfile)
+    total = 0
+    count = 0
+    for el in opf.iter():
+        if not el.tag.endswith("item") or not el.get("href"):
+            continue
+        href = posixpath.normpath(posixpath.join(base, unquote(el.get("href").split("#", 1)[0])))
+        total += sizes.get(href, 0)
+        count += 1
+    if total > ARCHIVE_MAX_UNCOMPRESSED_BYTES:
+        raise RuntimeError(
+            ui_msg(
+                "archive_too_large",
+                size=max(1, total // (1024 * 1024)),
+                limit=ARCHIVE_MAX_UNCOMPRESSED_BYTES // (1024 * 1024),
+                count=count,
+            )
+        )

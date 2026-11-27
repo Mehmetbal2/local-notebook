@@ -49,7 +49,28 @@ _ANY_FILTER_MAX_RATIO = 4096
 _FLATE_NAMES = {"/FlateDecode", "/Fl"}
 _FILTER_NAME_RE = re.compile(r"/[A-Za-z0-9]+")
 _DELIMS = rb"\s/\[\]()<>{}%"
-_DO_RE = re.compile(rb"/([^" + _DELIMS + rb"]+)\s*Do(?![^" + _DELIMS + rb"])")
+# A name, then whitespace or comments (PDF allows both between operands), then `Do`.
+_DO_RE = re.compile(rb"/([^" + _DELIMS + rb"]+)(?:\s|%[^\r\n]*)*Do(?![^" + _DELIMS + rb"])")
+_NAME_ESCAPE_RE = re.compile(rb"#([0-9A-Fa-f]{2})")
+
+
+def _pdf_name(raw: bytes) -> str:
+    """A name as MuPDF reads it: `#xx` escapes decoded (`/X#31` is `/X1`)."""
+    return _NAME_ESCAPE_RE.sub(lambda m: bytes([int(m.group(1), 16)]), raw).decode("latin-1")
+
+
+def _filter_value(doc, kind: str, value: str) -> str:
+    """The Filter entry with an indirect reference (`12 0 R`) resolved."""
+    for _ in range(4):
+        if kind != "xref":
+            return value
+        try:
+            ref = int(value.split()[0])
+            value = doc.xref_object(ref, compressed=True).strip()
+        except Exception:
+            return "/Unknown"
+        kind = "array" if value.startswith("[") else "name" if value.startswith("/") else "xref" if value.endswith("R") else "other"
+    return "/Unknown"
 
 
 _DEFAULT = object()
@@ -108,6 +129,9 @@ def _decoded_stream(doc, xref: int, limit: int) -> Optional[bytes]:
         return None
     if data is None:
         return b""
+    if kind == "xref":
+        value = _filter_value(doc, kind, value)
+        kind = "array" if value.startswith("[") else "name"
     filters = _FILTER_NAME_RE.findall(value) if kind in ("name", "array") else []
     for position, name in enumerate(filters):
         decoded: Optional[bytes] = None
@@ -158,7 +182,7 @@ def page_content_size(doc, page, limit: int) -> Optional[int]:
         if not names:
             return total
         for match in _DO_RE.finditer(data):
-            target = names.get(match.group(1).decode("latin-1"))
+            target = names.get(_pdf_name(match.group(1)))
             if target is None:
                 continue  # an image XObject: not decoded for text extraction
             size = form_size(target, depth + 1, active)

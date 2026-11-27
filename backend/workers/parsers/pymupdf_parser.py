@@ -104,6 +104,11 @@ def _norm_bbox(bbox, width: float, height: float) -> List[int]:
     return [clamp(x0 / width * 1000), clamp(y0 / height * 1000), clamp(x1 / width * 1000), clamp(y1 / height * 1000)]
 
 
+def parse_file(file_path: str, image_dir: Optional[Path] = None) -> ParseResult:
+    """PyMuPDFParser().parse as a module-level function, so it can run in a child process."""
+    return PyMuPDFParser(image_dir=image_dir).parse(file_path)
+
+
 def has_text_layer(file_path: str, sample_pages: int = 8) -> Tuple[bool, int]:
     """(True, page_count) when the PDF carries enough extractable text to skip OCR."""
     pymupdf = _import_pymupdf()
