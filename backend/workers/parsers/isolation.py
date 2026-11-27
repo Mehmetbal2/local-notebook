@@ -19,6 +19,7 @@ import threading
 import time
 import traceback
 from typing import Any, Callable, Optional
+from utils.errors import UserFacingError
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ PARSER_ISOLATION = os.getenv("PARSER_ISOLATION", "1").strip().lower() not in ("0
 _POLL_SECONDS = 0.1
 
 
-class ParserLimitExceeded(RuntimeError):
+class ParserLimitExceeded(UserFacingError):
     """The parser process went over its memory or time limit; the message is user-facing."""
 
 
@@ -194,7 +195,7 @@ def run_isolated(
             reason = "memory"  # killed by the system, usually for memory
         else:
             logger.warning("Parser process exited with code %s and no result", process.returncode)
-            raise RuntimeError(ui_msg("parser_failed", code=process.returncode))
+            raise UserFacingError(ui_msg("parser_failed", code=process.returncode))
     logger.warning("Parser process stopped: %s limit (%s)", reason, getattr(func, "__name__", func))
     if reason == "time":
         raise ParserLimitExceeded(ui_msg("parser_time_limit", limit=max(1, int(limit_seconds) // 60)))

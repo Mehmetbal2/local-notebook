@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 
 from .base import ARCHIVE_MAX_UNCOMPRESSED_BYTES, BaseParser, Block, ParseResult, check_zip_archive
 from utils.i18n import msg as ui_msg
+from utils.errors import UserFacingError
 
 
 # Block-level tags extracted from chapter bodies in document order; tables are handled separately as markdown
@@ -46,7 +47,7 @@ class EpubParser(BaseParser):
         try:
             book = epub.read_epub(file_path)
         except Exception as exc:  # damaged file / invalid zip / missing OPF
-            raise RuntimeError(ui_msg("epub_corrupt", error=exc)) from exc
+            raise UserFacingError(ui_msg("epub_corrupt", error=exc)) from exc
 
         href_to_title = self._build_toc_title_map(book)
 
@@ -103,7 +104,7 @@ class EpubParser(BaseParser):
             chapter_index += 1
 
         if not collected:
-            raise RuntimeError(ui_msg("epub_no_text"))
+            raise UserFacingError(ui_msg("epub_no_text"))
 
         blocks, text = self._build_blocks(collected)
 
@@ -344,7 +345,7 @@ def check_manifest_size(file_path: str) -> None:
         total += sizes.get(href, 0)
         count += 1
     if total > ARCHIVE_MAX_UNCOMPRESSED_BYTES:
-        raise RuntimeError(
+        raise UserFacingError(
             ui_msg(
                 "archive_too_large",
                 size=max(1, total // (1024 * 1024)),

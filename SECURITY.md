@@ -53,7 +53,7 @@ Local Notebook **tek bir bilgisayarda veya güvenilen bir yerel ağda** çalış
 - **Önizleme bağlantıları:** Görsel ve ses adreslerinde oturum anahtarı değil, yalnızca önizlemeleri açabilen kısa ömürlü bir anahtar bulunur.
 - **Arayüz güvenliği:** Model yanıtları ve belge içerikleri DOMPurify ile temizlenerek gösterilir.
 - **Veri klasörü:** Yalnızca sahibinin açabileceği izinlerle (700) tutulur; model yanıtlarındaki görseller başka sitelerden yüklenmez.
-- **Ağ:** `start.sh` API'yi yalnızca bu bilgisayarda dinletir; ağdaki diğer cihazlar arayüz üzerinden erişir. Yerel gömme ve ses servisleri de varsayılan olarak yalnızca `127.0.0.1` üzerinde çalışır.
+- **Ağ:** Arayüz ve API varsayılan olarak yalnızca bu bilgisayarda dinler. Arayüz şifresiz HTTP kullandığı için ağdaki diğer cihazlara açmak isteğe bağlıdır (`FRONTEND_HOST=0.0.0.0`, Docker'da `FRONTEND_BIND=0.0.0.0`) ve yalnızca güvendiğiniz bir ağda yapılmalıdır; o durumda şifreler ve oturum anahtarları ağda şifrelenmeden gider. Yerel gömme ve ses servisleri de varsayılan olarak yalnızca `127.0.0.1` üzerinde çalışır.
 - **Repo güvenliği:** GitHub Actions testleri, CodeQL taraması, Dependabot bağımlılık uyarıları ve gizli bilgi taraması için `.gitleaks.toml` yapılandırması.
 
 ## Kapsam
@@ -117,7 +117,7 @@ Local Notebook is designed to run **on one computer or a trusted local network**
 - Image and audio URLs carry a short-lived, preview-only token, never the session token.
 - Model output and document content are cleaned with DOMPurify before display.
 - The data folder is owner-only (700); images in model output cannot load from other sites.
-- Network: `start.sh` binds the API to this computer only; other devices use it through the interface. The local embedding and audio services also listen on `127.0.0.1` by default.
+- Network: the interface and the API listen on this computer only by default. The interface is plain HTTP, so opening it to other devices is opt-in (`FRONTEND_HOST=0.0.0.0`, or `FRONTEND_BIND=0.0.0.0` with Docker) and only for a network you trust; passwords and session tokens then travel unencrypted. The local embedding and audio services also listen on `127.0.0.1` by default.
 - Repository: GitHub Actions tests, CodeQL scanning, Dependabot alerts and a `.gitleaks.toml` secret-scanning configuration.
 
 ## Scope

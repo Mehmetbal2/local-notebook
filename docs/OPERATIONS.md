@@ -116,12 +116,15 @@ the vectors; in server mode it does not.
 | `MAX_REQUEST_MB` | `20` | Largest non-upload request body (JSON, forms) |
 | `MEDIA_TOKEN_EXPIRE_MINUTES` | `720` | Lifetime of the preview-only token put in image/audio URLs |
 | `LOGIN_MAX_FAILURES` / `LOGIN_MAX_FAILURES_PER_ADDRESS` / `LOGIN_MAX_FAILURES_PER_USER` / `LOGIN_WINDOW_SECONDS` | `10` / `50` / `30` / `900` | Failed sign-ins allowed per user name and address, per address, per user name from any address, and the window; then 429 |
-| `BACKEND_HOST` | `127.0.0.1` | Address `start.sh` binds the API to. Other devices use the API through the interface port; set `0.0.0.0` only to expose the API directly |
+| `BACKEND_HOST` | `127.0.0.1` | Address `start.sh` binds the API to. The interface reaches it through its `/api` proxy; set `0.0.0.0` only to expose the API directly |
+| `FRONTEND_HOST` | `127.0.0.1` | Address `start.sh` binds the interface to. The interface is plain HTTP, so it is this computer only by default; `0.0.0.0` lets other devices on a trusted network open it (passwords and session tokens then travel unencrypted; use a TLS reverse proxy or VPN beyond a trusted home network) |
+| `FRONTEND_BIND` | `127.0.0.1` | The same for Docker: the host address the interface port (8080) is published on |
 | `ARCHIVE_MAX_UNCOMPRESSED_MB` | `512` | Largest unpacked size of an EPUB/DOCX (zip bomb guard) |
 | `PDF_MAX_PAGES` | `5000` | PDFs with more pages are refused |
 | `PDF_MAX_PAGE_CONTENT_MB` | `32` | Largest expanded content of one PDF page (content streams plus every form drawing); larger pages are skipped |
 | `PDF_MAX_CONTENT_MB` | `1024` | Largest expanded content of a whole PDF, a shared stream counted once per page |
 | `PDF_MAX_TEXT_MB` | `64` | Most text (million characters) one PDF may yield |
+| `VLM_MAX_IMAGE_MB` | `20` | Largest image sent to the vision model for a description |
 | `PROJECT_SEARCH_CACHE_MB` | `128` | Memory for the in-project search cache (least recently used sources are dropped first) |
 | `PARSER_MAX_MEMORY_MB` | `2048` | Document parsing (PDF, EPUB, DOCX, HTML, TXT/Markdown) runs in a child process that is stopped above this resident memory |
 | `PARSER_TIMEOUT_SECONDS` | `1800` | The parsing child process is stopped after this long |

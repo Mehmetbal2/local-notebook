@@ -1319,3 +1319,78 @@ class TwelfthRoundTests(unittest.TestCase):
         big = paragraph("a ب " * 20000)
         self.assertLess(time.perf_counter() - start, 10)
         self.assertEqual("".join(r.find(f"{W}t").text for r in big.findall(f"{W}r")), "a ب " * 20000)
+
+
+class ThirteenthRoundTests(unittest.TestCase):
+    """AI Scan alerts #106-#110 (27 Nov 2026)."""
+
+    def test_overlapping_exports_keep_their_own_sources(self):
+        import io
+        import zipfile
+        from concurrent.futures import ThreadPoolExecutor
+
+        from services.export_service import new_export_service
+
+        self.assertIsNot(new_export_service(), new_export_service())
+
+        def export(tag: str) -> str:
+            msgs = [
+                {"id": f"{tag}-q", "role": "user", "content": f"Soru {tag}"},
+                {"id": f"{tag}-a", "role": "assistant", "content": f"Yanıt {tag} metni [citation_1]."},
+                {"id": f"{tag}-t", "role": "tool", "content": "", "citations": {"1": {"file_name": f"kaynak-{tag}.pdf", "content": f"alıntı {tag}"}}},
+            ]
+            stream, _ = new_export_service().export_session_to_docx(
+                session_title=f"Oturum {tag}", all_messages=msgs, user_message_ids=None,
+                include_citations=True, citation_style="footnote", output_language="Turkish",
+            )
+            z = zipfile.ZipFile(io.BytesIO(stream.getvalue()))
+            return "".join(z.read(n).decode("utf-8", "ignore") for n in z.namelist() if n.endswith(".xml"))
+
+        with ThreadPoolExecutor(8) as pool:
+            docs = list(pool.map(export, [f"t{i}" for i in range(16)]))
+        for i, doc in enumerate(docs):
+            others = [f"kaynak-t{j}.pdf" for j in range(16) if j != i]
+            self.assertFalse(any(o in doc for o in others), i)
+
+    def test_file_errors_show_only_user_facing_text(self):
+        from utils.errors import UserFacingError, user_error_message
+        from workers.parsers import isolation
+        from workers.parsers.pdf_limits import PdfTooLarge
+
+        self.assertEqual(user_error_message(UserFacingError("Dosya bozuk.")), "Dosya bozuk.")
+        self.assertEqual(user_error_message(PdfTooLarge("Çok büyük.")), "Çok büyük.")
+        leaky = RuntimeError("POST http://10.0.0.5:9000/embed failed: {'error': 'key sk-abc...'}")
+        self.assertNotIn("10.0.0.5", user_error_message(leaky))
+        self.assertNotIn("sk-abc", user_error_message(leaky))
+        rebuilt = isolation._rebuild_error("utils.errors", "UserFacingError", "Açıklama")
+        self.assertIsInstance(rebuilt, UserFacingError)
+
+    def test_large_images_are_not_sent_to_the_vision_model(self):
+        from services import vlm_client
+        from utils.errors import UserFacingError
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        (tmp / "k.png").write_bytes(b"x" * 1024)
+        (tmp / "b.png").write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+        with mock.patch.object(vlm_client, "VLM_MAX_IMAGE_MB", 2):
+            self.assertTrue(vlm_client.encode_image_to_base64(str(tmp / "k.png")))
+            with self.assertRaises(UserFacingError):
+                vlm_client.encode_image_to_base64(str(tmp / "b.png"))
+
+    def test_imported_pdfs_are_spooled_to_disk(self):
+        from routes.web_source_routes import _spool_to_disk
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        path = _spool_to_disk(tmp, b"%PDF-1.4 veri")
+        self.assertTrue(os.path.basename(path).startswith(".import-"))
+        self.assertEqual(Path(path).read_bytes(), b"%PDF-1.4 veri")
+
+    def test_interface_listens_locally_by_default(self):
+        root = os.path.dirname(BACKEND_DIR)
+        start = Path(root, "start.sh").read_text(encoding="utf-8")
+        self.assertIn('--host "${FRONTEND_HOST:-127.0.0.1}"', start)
+        self.assertNotIn("--host 0.0.0.0", start)
+        compose = Path(root, "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn('"${FRONTEND_BIND:-127.0.0.1}:8080:80"', compose)

@@ -475,7 +475,9 @@ class ParseOrderTests(unittest.TestCase):
             "segments must be persisted before the embedding call",
         )
         self.assertEqual(db_file.status, "failed")
-        self.assertIn("embedding down", db_file.error_message or "")
+        # The raw exception text stays in the log; the record shows only the kind of failure.
+        self.assertTrue(db_file.error_message)
+        self.assertNotIn("embedding down", db_file.error_message)
         self.assertEqual(queued, [(db_file.id, "Turkish")])
 
 

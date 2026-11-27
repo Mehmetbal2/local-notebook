@@ -16,6 +16,7 @@ import os
 import re
 import zlib
 from typing import Dict, Iterable, List, Optional
+from utils.errors import UserFacingError
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ def _filter_value(doc, kind: str, value: str) -> str:
 _DEFAULT = object()
 
 
-class PdfTooLarge(RuntimeError):
+class PdfTooLarge(UserFacingError):
     """The PDF would expand beyond the configured limits; the message is user-facing."""
 
 

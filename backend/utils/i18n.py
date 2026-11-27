@@ -204,6 +204,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     # ---- PDF size limits ----
     "parser_memory_limit": {"tr": "Belge işlenirken bellek sınırı ({limit} MB) aşıldı; dosya açıldığında aşırı büyüyor olabilir. Güvenlik nedeniyle işlem durduruldu.", "en": "Processing the document went over the memory limit ({limit} MB); the file may expand to an unreasonable size. It was stopped for safety.", "zh": "处理该文档时超出内存上限（{limit} MB），文件展开后可能过大，出于安全考虑已停止。"},
+    "image_too_large": {"tr": "Görsel çok büyük ({size} MB; sınır {limit} MB), görsel modeline gönderilmedi.", "en": "The image is too large ({size} MB; limit {limit} MB) and was not sent to the vision model.", "zh": "图片过大（{size} MB；上限 {limit} MB），未发送给视觉模型。"},
     "parser_failed": {"tr": "Belge işleme süreci beklenmedik biçimde sonlandı (kod {code}).", "en": "The document processing step ended unexpectedly (code {code}).", "zh": "文档处理进程意外结束（代码 {code}）。"},
     "parser_time_limit": {"tr": "Belge işleme süre sınırını ({limit} dk) aştı ve durduruldu.", "en": "Processing the document took longer than the time limit ({limit} min) and was stopped.", "zh": "处理该文档超过时间上限（{limit} 分钟），已停止。"},
     "pdf_too_many_pages": {"tr": "PDF çok fazla sayfa içeriyor ({count} sayfa; sınır {limit}). Güvenlik nedeniyle işlenmedi.", "en": "The PDF has too many pages ({count} pages; limit {limit}). It was not processed for safety.", "zh": "该 PDF 页数过多（{count} 页；上限 {limit}），出于安全考虑未处理。"},

@@ -666,7 +666,9 @@ async def export_session(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from services.export_service import export_service
+    from services.export_service import new_export_service
+
+    export_service = new_export_service()  # one instance per export: see new_export_service
 
     session = await require_session(db, session_id, current_user)
 

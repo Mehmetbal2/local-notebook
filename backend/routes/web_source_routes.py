@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+import tempfile
 import unicodedata
 from datetime import datetime
 from pathlib import Path
@@ -365,20 +367,43 @@ async def import_web_sources(
     todo = [i for i in items if sx._normalize_url(i.url) not in already]
 
     sem = asyncio.Semaphore(FETCH_CONCURRENCY)
+    project_dir = safe_join(get_upload_dir(), project_id)
+    project_dir.mkdir(parents=True, exist_ok=True)
+    spooled: dict[int, tuple[str, int]] = {}  # id(page) -> (temporary file, size)
 
     async def fetch(item: WebSourceItem):
         async with sem:
             try:
                 page, info = await _fetch_source(item)
-                return item, page, info, None
             except Exception as exc:
                 logger.info(f"web source fetch failed ({item.url}): {exc}")
                 return item, None, {}, exc
+            if page.pdf_bytes:
+                # A PDF goes to disk as soon as it arrives, so at most FETCH_CONCURRENCY
+                # downloads are in memory at once instead of every PDF of the request.
+                spooled[id(page)] = (await asyncio.to_thread(_spool_to_disk, project_dir, page.pdf_bytes), len(page.pdf_bytes))
+                page.pdf_bytes = b""  # still a PDF (is_pdf), without holding the bytes
+            return item, page, info, None
 
-    fetched = await asyncio.gather(*(fetch(i) for i in todo))
+    try:
+        fetched = await asyncio.gather(*(fetch(i) for i in todo))
+        return await _store_fetched(db, request, body, project_id, project_dir, fetched, spooled, skipped)
+    finally:
+        for path, _size in spooled.values():
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
 
-    project_dir = safe_join(get_upload_dir(), project_id)
-    project_dir.mkdir(parents=True, exist_ok=True)
+
+def _spool_to_disk(project_dir, data: bytes) -> str:
+    fd, path = tempfile.mkstemp(prefix=".import-", suffix=".part", dir=project_dir)
+    with os.fdopen(fd, "wb") as out:
+        out.write(data)
+    return path
+
+
+async def _store_fetched(db, request, body, project_id, project_dir, fetched, spooled, skipped) -> dict:
     taken = {
         n.lower()
         for n in (await db.execute(select(File.file_name).where(File.project_id == project_id))).scalars().all()
@@ -394,7 +419,7 @@ async def import_web_sources(
             continue
         if page.is_pdf:
             dest = _unique_path(project_dir, _base_name(page, title, info), ".pdf", taken)
-            data = page.pdf_bytes or b""
+            data = None
         else:
             # An abstract is short, so it is kept even below the usual minimum.
             min_text = 80 if info.get("abstract_only") else MIN_PAGE_TEXT
@@ -407,14 +432,19 @@ async def import_web_sources(
             if info.get("abstract_only"):
                 abstract_only.append(item.url)
 
-        async with aiofiles.open(dest, "wb") as f:
-            await f.write(data)
+        if data is None:
+            spool_path, file_size = spooled.pop(id(page))
+            await asyncio.to_thread(os.replace, spool_path, dest)
+        else:
+            async with aiofiles.open(dest, "wb") as f:
+                await f.write(data)
+            file_size = len(data)
         db_file = File(
             project_id=project_id,
             file_name=dest.name,
             file_path=to_portable_path(dest),
             file_type="pdf" if page.is_pdf else "md",
-            file_size=len(data),
+            file_size=file_size,
             status="pending",
             processing_current=0,
             processing_total=None,

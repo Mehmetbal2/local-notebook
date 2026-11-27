@@ -101,4 +101,6 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:80"
+      # Plain HTTP: this computer only by default. FRONTEND_BIND=0.0.0.0 opens it to other
+      # devices on a network you trust (passwords and tokens travel unencrypted).
+      - "${FRONTEND_BIND:-127.0.0.1}:8080:80"

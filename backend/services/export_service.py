@@ -165,11 +165,16 @@ def question_heading(question: str) -> tuple[str, bool]:
 
 
 class ExportService:
+    """Builds one export at a time: it keeps that export's footnotes and citation
+    numbering on the instance, so every export needs its own instance (new_export_service).
+    """
+
+    # Whether pandoc works is the same for every export; checked once per process.
+    _pandoc_usable: Optional[bool] = None
 
     def __init__(self):
         self._language = "Chinese"
         self._labels: Dict[str, str] = EXPORT_LABELS["Chinese"]
-        self._pandoc_available: Optional[bool] = None
 
     def _configure_language(self, output_language: Optional[str]) -> None:
         self._language = normalize_export_language(output_language)
@@ -892,17 +897,17 @@ class ExportService:
             return stream
 
     def _convert_markdown_to_docx_raw(self, markdown_content: str) -> BytesIO:
-        if self._pandoc_available is None:
-            self._pandoc_available = self._is_pandoc_usable()
+        if ExportService._pandoc_usable is None:
+            ExportService._pandoc_usable = self._is_pandoc_usable()
 
-        if not self._pandoc_available:
+        if not ExportService._pandoc_usable:
             return self._build_docx_from_markdown(markdown_content)
 
         try:
             stream = self._convert_markdown_to_docx_with_pandoc(markdown_content)
             return stream
         except Exception as exc:
-            self._pandoc_available = False
+            ExportService._pandoc_usable = False
             logger.warning(
                 "Pandoc DOCX conversion failed (%s: %s); using built-in DOCX writer",
                 type(exc).__name__,
@@ -1749,4 +1754,13 @@ class ExportService:
             tblBorders.append(border)
 
 
-export_service = ExportService()
+def new_export_service() -> ExportService:
+    """A fresh instance for one export.
+
+    Exports run in worker threads, so two can overlap; sharing one instance let
+    one export's footnotes and sources end up in another user's document.
+    """
+    return ExportService()
+
+
+export_service = ExportService()  # kept for helpers and tests; routes use new_export_service()

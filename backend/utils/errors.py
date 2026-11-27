@@ -61,6 +61,17 @@ def error_kind(exc: BaseException) -> str:
     return "unknown"
 
 
+class UserFacingError(RuntimeError):
+    """An error whose message was written for the user (an i18n message), safe to show as is."""
+
+
+def user_error_message(exc: BaseException) -> str:
+    """The message of a UserFacingError, otherwise only the kind of failure (public_error_message)."""
+    if isinstance(exc, UserFacingError):
+        return str(exc)
+    return public_error_message(exc)
+
+
 def public_error_message(exc: BaseException) -> str:
     """A short message in the interface language that describes the failure without its details."""
     kind = error_kind(exc)

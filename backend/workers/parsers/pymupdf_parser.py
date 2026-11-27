@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .base import Block, ParseResult
 from .pdf_limits import PDF_MAX_TEXT_CHARS, PdfBudget, PdfTooLarge, text_flags
 from utils.i18n import msg as ui_msg
+from utils.errors import UserFacingError
 
 logger = logging.getLogger("parsers.pymupdf")
 
@@ -93,7 +94,7 @@ def _import_pymupdf():
             import fitz  # type: ignore
             return fitz
         except ImportError as exc:
-            raise RuntimeError(ui_msg("pymupdf_missing")) from exc
+            raise UserFacingError(ui_msg("pymupdf_missing")) from exc
 
 
 def _norm_bbox(bbox, width: float, height: float) -> List[int]:

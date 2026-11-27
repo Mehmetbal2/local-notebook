@@ -4,6 +4,7 @@ from typing import Any, List
 
 from .base import BaseParser, Block, ParseResult
 from utils.i18n import msg as ui_msg
+from utils.errors import UserFacingError
 
 
 @dataclass
@@ -31,7 +32,7 @@ class AudioParser(BaseParser):
 
         enabled, base_url, model, api_key = await config.resolve_funasr_config()
         if not enabled or not base_url or not model or not api_key:
-            raise RuntimeError(ui_msg("asr_not_configured"))
+            raise UserFacingError(ui_msg("asr_not_configured"))
 
         result = await FunASRClient(base_url=base_url, api_key=api_key, model=model).transcribe(file_path)
         if not result.success:

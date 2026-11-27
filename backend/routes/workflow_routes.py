@@ -231,7 +231,9 @@ async def export_workflow(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from services.export_service import export_service
+    from services.export_service import new_export_service
+
+    export_service = new_export_service()  # one instance per export: see new_export_service
 
     wf = await require_workflow(db, workflow_id, current_user, with_features=True)
 

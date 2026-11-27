@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from arq.connections import RedisSettings
 from arq.worker import func
 
+from utils.errors import UserFacingError, user_error_message
 from utils.i18n import msg as ui_msg, set_language as set_ui_language
 
 logger = logging.getLogger(__name__)
@@ -451,10 +452,10 @@ async def parse_file_task(
             import config
             _, emb_base_url, _, emb_api_key = await config.resolve_embedding_config()
             if not emb_base_url:
-                raise RuntimeError(ui_msg("embedding_url_missing"))
+                raise UserFacingError(ui_msg("embedding_url_missing"))
             emb_source = await config.get_setting("embedding_source", "local")
             if emb_source != "local" and not emb_api_key:
-                raise RuntimeError(ui_msg("embedding_key_missing"))
+                raise UserFacingError(ui_msg("embedding_key_missing"))
 
             logger.info(f"[{file_name}] step 1/5: extracting text & creating blocks")
             text, blocks, raw_images = await _extract_text_and_blocks(
@@ -758,7 +759,7 @@ async def parse_file_task(
                 # Deleted while it was being processed: nothing left to mark or retry.
                 return {"status": "error", "reason": "file deleted"}
             db_file.status = "failed"
-            db_file.error_message = str(exc)
+            db_file.error_message = user_error_message(exc)
             db_file.updated_at = datetime.now(timezone.utc)
             await _shielded_commit(db)
             if not content_saved:
@@ -976,7 +977,7 @@ async def reembed_file_task(
                     db_file = await db.get(File, file_id)
                     if db_file is not None:
                         db_file.status = "failed"
-                        db_file.error_message = str(exc)
+                        db_file.error_message = user_error_message(exc)
                         db_file.processing_message = None
                         await _shielded_commit(db)
                 except Exception:

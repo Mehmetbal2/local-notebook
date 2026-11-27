@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Tuple
 
 from .base import BaseParser, Block, ParseResult
 from utils.i18n import msg as ui_msg
+from utils.errors import UserFacingError
 
 logger = logging.getLogger("parsers.pdf")
 
@@ -44,7 +45,7 @@ class PDFParser(BaseParser):
 
         if engine == "ocr":
             if not ocr_ready:
-                raise RuntimeError(ui_msg("ocr_not_configured"))
+                raise UserFacingError(ui_msg("ocr_not_configured"))
             return await self._parse_with_ocr(file_path, base_url, model, api_key)
 
         if engine == "local":
@@ -83,7 +84,7 @@ class PDFParser(BaseParser):
         # In a child process with a memory and time limit: see isolation.py.
         result = await asyncio.to_thread(run_isolated, parse_file, file_path, image_dir)
         if not result.blocks:
-            raise RuntimeError(ui_msg("pdf_no_text"))
+            raise UserFacingError(ui_msg("pdf_no_text"))
         return result
 
     async def _parse_with_ocr(self, file_path: str, base_url: str, model: str, api_key: str) -> ParseResult:

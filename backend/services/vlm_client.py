@@ -1,12 +1,28 @@
+import asyncio
 import base64
 import logging
+import os
 from typing import Optional
 
 import httpx
 
 import config
+from utils.errors import UserFacingError
+from utils.i18n import msg as ui_msg
 
 logger = logging.getLogger(__name__)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+# Largest image sent to the vision model. The file is read whole and sent base64 inside a
+# JSON body (about 2.7 copies in memory), so the general upload limit is far too high here.
+VLM_MAX_IMAGE_MB = _env_int("VLM_MAX_IMAGE_MB", 20)
 
 
 async def resolve_vlm_config() -> tuple[str, str, str]:
@@ -17,8 +33,13 @@ async def resolve_vlm_config() -> tuple[str, str, str]:
 
 
 def encode_image_to_base64(image_path: str) -> str:
+    size = os.path.getsize(image_path)
+    if size > VLM_MAX_IMAGE_MB * 1024 * 1024:
+        raise UserFacingError(
+            ui_msg("image_too_large", size=max(1, size // (1024 * 1024)), limit=VLM_MAX_IMAGE_MB)
+        )
     with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
+        return base64.b64encode(f.read(VLM_MAX_IMAGE_MB * 1024 * 1024 + 1)).decode("utf-8")
 
 
 def get_image_mime_type(image_path: str) -> str:
@@ -57,7 +78,7 @@ async def describe_image(
             "Be detailed but concise."
         )
 
-    base64_image = encode_image_to_base64(image_path)
+    base64_image = await asyncio.to_thread(encode_image_to_base64, image_path)
     mime_type = get_image_mime_type(image_path)
 
     headers = {

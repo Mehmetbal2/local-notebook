@@ -301,8 +301,8 @@ start_services() {
     rotate_log "$LOG_DIR/backend.log"
     (
       cd "$PROJECT_ROOT/backend"
-      # The API listens on this computer only; other devices on the network use it
-      # through the interface (vite proxies /api). BACKEND_HOST=0.0.0.0 exposes it directly.
+      # The API listens on this computer only; the interface reaches it through vite's
+      # /api proxy. BACKEND_HOST=0.0.0.0 exposes it directly.
       PORT="$BACKEND_PORT" nohup "$PYTHON_BIN" -m uvicorn main:app \
         --host "${BACKEND_HOST:-127.0.0.1}" --port "$BACKEND_PORT" \
         < /dev/null >> "$LOG_DIR/backend.log" 2>&1 &
@@ -317,8 +317,11 @@ start_services() {
     rotate_log "$LOG_DIR/frontend.log"
     (
       cd "$PROJECT_ROOT/frontend"
+      # The interface is plain HTTP, so by default only this computer can open it: on a
+      # network, passwords and session tokens would travel unencrypted. FRONTEND_HOST=0.0.0.0
+      # opens it to other devices on a network you trust (see docs/OPERATIONS.md).
       VITE_PROXY_TARGET="http://127.0.0.1:$BACKEND_PORT" nohup "$NODE_BIN" ./node_modules/vite/bin/vite.js \
-        --host 0.0.0.0 --port "$FRONTEND_PORT" \
+        --host "${FRONTEND_HOST:-127.0.0.1}" --port "$FRONTEND_PORT" \
         < /dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
       echo $! > "$FRONTEND_PID_FILE"
     )
