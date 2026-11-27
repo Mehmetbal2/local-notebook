@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt import PyJWTError as JWTError
-from sqlalchemy import delete as sa_delete
+from sqlalchemy import delete as sa_delete, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.database import get_db
@@ -209,15 +209,39 @@ async def rotate_refresh(db: AsyncSession, payload: dict) -> AuthSession:
     A refresh token whose id is not the session's current one was already
     used, so it is a copy: the whole session is revoked.
     """
-    if not await session_is_active(db, payload) or payload.get("sid") is None:
+    sid = payload.get("sid")
+    if sid is None or not await session_is_active(db, payload):
         raise _credentials_exc
-    session = await db.get(AuthSession, payload["sid"])
-    if not isinstance(payload.get("jti"), str) or not hmac.compare_digest(payload["jti"], session.refresh_jti):
-        session.revoked_at = datetime.now(timezone.utc)
+    old_jti = payload.get("jti")
+    new_jti = str(uuid4())
+    # One conditional UPDATE: of two requests presenting the same refresh token
+    # at once, only the first matches the old id; the other sees no row changed
+    # and is treated as a reuse. Comparing in Python and saving afterwards let
+    # both pass before either committed.
+    rotated = 0
+    if isinstance(old_jti, str):
+        result = await db.execute(
+            sa_update(AuthSession)
+            .where(
+                AuthSession.id == sid,
+                AuthSession.refresh_jti == old_jti,
+                AuthSession.revoked_at.is_(None),
+            )
+            .values(refresh_jti=new_jti)
+            .execution_options(synchronize_session=False)
+        )
+        rotated = result.rowcount or 0
+    if rotated != 1:
+        await db.execute(
+            sa_update(AuthSession)
+            .where(AuthSession.id == sid)
+            .values(revoked_at=datetime.now(timezone.utc))
+            .execution_options(synchronize_session=False)
+        )
         await db.commit()
         raise _credentials_exc
-    session.refresh_jti = str(uuid4())
     await db.commit()
+    session = await db.get(AuthSession, sid, populate_existing=True)
     return session
 
 

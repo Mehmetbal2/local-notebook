@@ -213,6 +213,27 @@ async def list_files(
     return result.scalars().all()
 
 
+def _reserve_upload_path(project_dir: Path, file_name: str) -> Path:
+    """Create an empty, not yet used file for an upload and return its path.
+
+    A second upload with the same name gets "name (2).ext" on disk: writing to
+    the existing path replaced the first source's file while both records
+    stayed, so its citations pointed at other content and deleting either
+    record removed the shared file. The file is created exclusively, so two
+    uploads at the same moment cannot pick the same path either. The record
+    keeps the name the user gave.
+    """
+    stem, suffix = Path(file_name).stem, Path(file_name).suffix
+    for attempt in range(1, 1000):
+        candidate = safe_join(project_dir, file_name if attempt == 1 else f"{stem} ({attempt}){suffix}")
+        try:
+            os.close(os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            return candidate
+        except FileExistsError:
+            continue
+    raise ValueError("no free file name")
+
+
 @router.post("", response_model=FileResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
     project_id: str,
@@ -256,13 +277,13 @@ async def upload_file(
 
     try:
         project_dir = safe_join(UPLOAD_DIR, project_id)
-        dest = safe_join(project_dir, clean_filename)
+        project_dir.mkdir(parents=True, exist_ok=True)
+        dest = _reserve_upload_path(project_dir, clean_filename)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Invalid file name.",
         )
-    project_dir.mkdir(parents=True, exist_ok=True)
 
     file_size = 0
     async with aiofiles.open(dest, "wb") as f:

@@ -59,7 +59,7 @@ async def _reply(send, status: int, detail: str) -> None:
 async def _uploader(token: str):
     """The user behind a still-valid access token, or None."""
     from database import AsyncSessionLocal
-    from dependencies.auth import decode_token, token_matches_user
+    from dependencies.auth import decode_token, session_is_active, token_matches_user
     from models.user import User
 
     try:
@@ -68,7 +68,9 @@ async def _uploader(token: str):
         return None
     async with AsyncSessionLocal() as db:
         user = await db.get(User, payload["sub"])
-    if user is None or not token_matches_user(payload, user):
+        # A signed-out session's tokens are refused here too, before any body is read.
+        active = user is not None and await session_is_active(db, payload)
+    if user is None or not active or not token_matches_user(payload, user):
         return None
     return user
 

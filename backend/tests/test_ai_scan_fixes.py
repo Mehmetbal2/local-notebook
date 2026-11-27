@@ -1185,3 +1185,90 @@ class TenthRoundTests(unittest.TestCase):
             ps.forget_file("f39")
             self.assertNotIn("f39", ps._file_cache)
             self.assertEqual(ps._cache_bytes, sum(e.size for e in ps._file_cache.values()))
+
+
+class EleventhRoundTests(unittest.TestCase):
+    """AI Scan alerts #101-#103 (27 Nov 2026)."""
+
+    def _run_with_file_db(self, body):
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from database import Base
+        from models.auth_session import AuthSession
+        from models.user import User
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+
+        async def main():
+            engine = create_async_engine(f"sqlite+aiosqlite:///{tmp / 'auth.db'}")
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all, tables=[User.__table__, AuthSession.__table__])
+            maker = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                await body(maker)
+            finally:
+                await engine.dispose()
+
+        asyncio.run(main())
+
+    def test_concurrent_refresh_with_one_token_lets_only_one_through(self):
+        from fastapi import HTTPException
+
+        from dependencies import auth
+        from models.user import User
+
+        async def body(maker):
+            async with maker() as db:
+                user = User(id="u3", username="zeynep", password_hash=auth.hash_password("parola-789"), role="user")
+                db.add(user)
+                await db.commit()
+                tokens = auth.issue_tokens(user, await auth.start_session(db, user))
+            payload = auth.decode_token(tokens["refresh_token"], expected_type="refresh")
+
+            async def attempt():
+                async with maker() as db:
+                    try:
+                        return await auth.rotate_refresh(db, dict(payload))
+                    except HTTPException:
+                        return None
+
+            results = await asyncio.gather(*(attempt() for _ in range(4)))
+            self.assertEqual(sum(r is not None for r in results), 1)
+            async with maker() as db:  # the replays revoked the session
+                self.assertFalse(await auth.session_is_active(db, auth.decode_token(tokens["access_token"])))
+
+        self._run_with_file_db(body)
+
+    def test_upload_guard_refuses_signed_out_sessions(self):
+        import database
+
+        from dependencies import auth
+        from models.user import User
+        from utils import upload_guard
+
+        async def body(maker):
+            async with maker() as db:
+                user = User(id="u4", username="ali", password_hash=auth.hash_password("parola-000"), role="admin")
+                db.add(user)
+                await db.commit()
+                tokens = auth.issue_tokens(user, await auth.start_session(db, user))
+            with mock.patch.object(database, "AsyncSessionLocal", maker):
+                self.assertIsNotNone(await upload_guard._uploader(tokens["access_token"]))
+                async with maker() as db:
+                    await auth.revoke_session(db, auth.decode_token(tokens["access_token"])["sid"])
+                self.assertIsNone(await upload_guard._uploader(tokens["access_token"]))
+
+        self._run_with_file_db(body)
+
+    def test_same_name_upload_gets_its_own_file(self):
+        from routes.file_routes import _reserve_upload_path
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        first = _reserve_upload_path(tmp, "rapor.pdf")
+        second = _reserve_upload_path(tmp, "rapor.pdf")
+        third = _reserve_upload_path(tmp, "rapor.pdf")
+        self.assertEqual([p.name for p in (first, second, third)], ["rapor.pdf", "rapor (2).pdf", "rapor (3).pdf"])
+        with self.assertRaises(ValueError):
+            _reserve_upload_path(tmp, "../dışarı.pdf")
