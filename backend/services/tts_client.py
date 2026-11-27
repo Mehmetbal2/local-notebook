@@ -11,10 +11,30 @@ from utils.i18n import msg as ui_msg
 _CITATION_RE = re.compile(r"\[citation_[^\]]+\]")
 _FENCED_CODE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
 _LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
-_TABLE_SEP_RE = re.compile(r"^\s*\|?[\s:\-\|]+\|?\s*$", re.MULTILINE)
-_HEADING_RE = re.compile(r"^\s*#{1,6}\s+", re.MULTILINE)
-_BLOCKQUOTE_RE = re.compile(r"^\s*>\s*", re.MULTILINE)
-_BULLET_RE = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
+# Line-start patterns use [ \t]* rather than \s*: \s also matches newlines, so a long run
+# of blank lines or spaces was rescanned from every line start (quadratic time).
+_HEADING_RE = re.compile(r"^[ \t]*#{1,6}[ \t]+", re.MULTILINE)
+_BLOCKQUOTE_RE = re.compile(r"^[ \t]*>[ \t]*", re.MULTILINE)
+_BULLET_RE = re.compile(r"^[ \t]*[-*+][ \t]+", re.MULTILINE)
+# Only the start of a whitespace run may begin a match, so a long run without the
+# punctuation after it is scanned once.
+_SPACE_BEFORE_PUNCT_RE = re.compile(r"(?<!\s)\s+([.,!?;:،؛。！？])")
+_TABLE_SEP_CHARS = frozenset("|:- \t")
+
+
+def _drop_table_separators(text: str) -> str:
+    """Remove Markdown table separator rows (|---|:---:|) and rules made of dashes.
+
+    A per-line check instead of a regex with overlapping whitespace repetitions,
+    which took quadratic time on a dash followed by a long run of spaces.
+    """
+    kept = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped and set(stripped) <= _TABLE_SEP_CHARS and ("-" in stripped or "|" in stripped):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?।؟。！？；;\n])\s+")
 
 # Dialogue scripts mark each turn with one of these speaker tags at line start.
@@ -60,7 +80,7 @@ def _clean_text_for_speech(markdown: str) -> str:
     text = _FENCED_CODE_RE.sub(r"\1", text)
     text = text.replace("`", "")
     text = _LINK_RE.sub(r"\1", text)
-    text = _TABLE_SEP_RE.sub("", text)
+    text = _drop_table_separators(text)
     text = text.replace("|", ", ")
     text = _HEADING_RE.sub("", text)
     text = _BLOCKQUOTE_RE.sub("", text)
@@ -68,7 +88,7 @@ def _clean_text_for_speech(markdown: str) -> str:
     text = text.replace("**", "").replace("__", "")
     text = re.sub(r"(?<!\w)[*_]|[*_](?!\w)", "", text)
     # Clean stray spaces before punctuation introduced by removing citations
-    text = re.sub(r"\s+([.,!?;:،؛。！？])", r"\1", text)
+    text = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

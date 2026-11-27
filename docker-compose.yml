@@ -85,15 +85,16 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/local_notebook.db
       - MILVUS_URI=http://milvus:19530
       - UPLOAD_DIR=/app/data/uploads
-      # Requests reach the backend through the frontend's nginx, which replaces any
+      # Requests reach the backend only through the frontend's nginx, which replaces any
       # X-Forwarded-For with the real client address; trusting it gives the sign-in
-      # limiter each user's own address.
+      # limiter each user's own address. This is safe only because the backend port is
+      # not published (below): nothing else can reach it to send its own header.
       - FORWARDED_ALLOW_IPS=*
     volumes:
       - ${LOCAL_NOTEBOOK_DATA_DIR:-./local-notebook-data}:/app/data
-    ports:
-      # The interface reaches the API through nginx (port 8080); 8081 is for this machine only.
-      - "127.0.0.1:8081:8000"
+    # No published port: the interface reaches the API, including /health, through nginx
+    # on port 8080. Publishing 8000 would let a local client bypass nginx and forge
+    # X-Forwarded-For to get around the sign-in limiter.
 
   frontend:
     build: ./frontend

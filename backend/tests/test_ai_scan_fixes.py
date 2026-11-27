@@ -299,7 +299,9 @@ class FifthRoundTests(unittest.TestCase):
         for name in ("redis", "milvus"):
             block = "\n".join(line for line in services[name].splitlines() if not line.strip().startswith("#"))
             self.assertNotIn("ports:", block, name)
-        self.assertIn("ports:", services["backend"])
+        backend = "\n".join(line for line in services["backend"].splitlines() if not line.strip().startswith("#"))
+        # The backend trusts X-Forwarded-For from nginx, so it must not be reachable directly.
+        self.assertNotIn("ports:", backend)
 
 
 class HtmlTableScanTests(unittest.TestCase):
@@ -1394,3 +1396,37 @@ class ThirteenthRoundTests(unittest.TestCase):
         self.assertNotIn("--host 0.0.0.0", start)
         compose = Path(root, "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn('"${FRONTEND_BIND:-127.0.0.1}:8080:80"', compose)
+
+
+class FourteenthRoundTests(unittest.TestCase):
+    """AI Scan alerts #111-#113 (27 Nov 2026)."""
+
+    def test_speech_cleanup_is_linear_and_keeps_its_output(self):
+        import time
+
+        from services.tts_client import _clean_text_for_speech
+
+        start = time.perf_counter()
+        _clean_text_for_speech("--" + " " * 100_000 + "x")
+        _clean_text_for_speech("a" + "\n" * 100_000 + "b" + " " * 100_000 + "c")
+        self.assertLess(time.perf_counter() - start, 2)
+        text = _clean_text_for_speech(
+            "# Başlık\n\nBir paragraf [citation_1] burada .\n\n| A | B |\n|---|:---:|\n| 1 | 2 |\n\n> alıntı\n- madde\n\n---\n\nSon !"
+        )
+        # Same as before the change, except that the blank line after the table is kept.
+        self.assertEqual(text, "Başlık\n\nBir paragraf burada., A, B,, 1, 2, \n\nalıntı\nmadde\n\nSon!")
+
+    def test_tag_heavy_pages_are_parsed_in_the_limited_process(self):
+        from services import searxng_client as sx
+        from workers.parsers import isolation
+
+        small = "<html><head><title>Küçük</title></head><body><p>" + "metin " * 50 + "</p></body></html>"
+        with mock.patch.object(isolation, "run_isolated") as spy:
+            self.assertEqual(sx._extract_html_bounded(small, "https://ex.org/")["title"], "Küçük")
+            spy.assert_not_called()
+        big = "<html><body>" + "<b>x</b>" * 30_000 + "</body></html>"
+        with mock.patch.object(sx, "HTML_INPROCESS_MAX_TAGS", 1000), mock.patch.object(isolation, "PARSER_ISOLATION", True), \
+                mock.patch.object(isolation, "run_isolated", wraps=isolation.run_isolated) as spy:
+            info = sx._extract_html_bounded(big, "https://ex.org/")
+            spy.assert_called_once()
+            self.assertIn("x", info["text"])

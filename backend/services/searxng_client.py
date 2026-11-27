@@ -415,6 +415,25 @@ def _pick_main(soup):
     return soup.body or soup
 
 
+# Pages with more tags than this are parsed in the memory- and time-limited child
+# process (workers/parsers/isolation.py): BeautifulSoup needs far more memory per tag
+# than the page's own size, so a small page with millions of tags could exhaust the
+# backend. Ordinary pages stay in-process, which avoids starting a process per page.
+HTML_INPROCESS_MAX_TAGS = 50_000
+HTML_PARSE_MEMORY_MB = 1024
+HTML_PARSE_TIMEOUT_SECONDS = 120
+
+
+def _extract_html_bounded(html: str, base_url: str) -> dict:
+    if html.count("<") <= HTML_INPROCESS_MAX_TAGS:
+        return extract_html(html, base_url)
+    from workers.parsers.isolation import run_isolated
+
+    return run_isolated(
+        extract_html, html, base_url, memory_mb=HTML_PARSE_MEMORY_MB, timeout=HTML_PARSE_TIMEOUT_SECONDS
+    )
+
+
 def extract_html(html: str, base_url: str) -> dict:
     from bs4 import BeautifulSoup
 
@@ -589,7 +608,7 @@ async def fetch_page(url: str, *, timeout: float = 15.0, follow_pdf: bool = Fals
             raise SearxngError("http", f"unsupported content type: {content_type or 'unknown'}")
 
         html = body.decode(resp.encoding or "utf-8", errors="replace")
-        info = await asyncio.to_thread(extract_html, html, final_url)
+        info = await asyncio.to_thread(_extract_html_bounded, html, final_url)
         page.title = info["title"]
         page.text = info["text"]
         page.description = info["description"]
